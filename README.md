@@ -1,4 +1,3 @@
-```markdown
 # LogSonar
 
 **LogSonar** est un outil de surveillance de sécurité léger, stylé et intelligent, conçu pour analyser les logs de vos conteneurs Docker en temps réel. 
@@ -134,4 +133,3 @@ Sur un serveur Ubuntu classique, aucune configuration supplémentaire n'est néc
 
 Ce projet est open-source et libre d'utilisation. 
 Créé avec patience et beaucoup de café.
-```
