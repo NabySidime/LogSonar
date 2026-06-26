@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="fr" class="h-full bg-white">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LogSonar</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script>tailwind.config = { darkMode: 'class' }</script>
+    <style>
+        #logStream::-webkit-scrollbar { width: 8px; }
+        #logStream::-webkit-scrollbar-track { background: transparent; }
+        #logStream::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 4px; }
+        .dark #logStream::-webkit-scrollbar-thumb { background: #374151; }
+    </style>
+</head>
+<body class="h-full flex bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-gray-100 transition-colors duration-200">
+
+    <aside class="w-64 bg-white border-r border-gray-200 dark:bg-gray-800 dark:border-gray-700 flex flex-col">
+        <div class="p-6 border-b border-gray-200 dark:border-gray-700">
+            <h1 class="text-2xl font-bold tracking-tight text-black dark:text-white flex items-center gap-2">
+                <i data-lucide="radar" class="w-7 h-7"></i> LogSonar
+            </h1>
+        </div>
+        <nav class="flex-1 p-4 space-y-2">
+            <a href="#" onclick="showPage('live')" id="nav-live" class="nav-link flex items-center gap-3 px-4 py-3 bg-gray-100 dark:bg-gray-700 text-black dark:text-white rounded-lg font-medium">
+                <i data-lucide="activity" class="w-5 h-5"></i> Live (Temps réel)
+            </a>
+            <a href="#" onclick="showPage('reports')" id="nav-reports" class="nav-link flex items-center gap-3 px-4 py-3 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-black dark:hover:text-white rounded-lg transition-colors">
+                <i data-lucide="file-text" class="w-5 h-5"></i> Rapports
+            </a>
+            <a href="#" onclick="showPage('settings')" id="nav-settings" class="nav-link flex items-center gap-3 px-4 py-3 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-black dark:hover:text-white rounded-lg transition-colors">
+                <i data-lucide="settings" class="w-5 h-5"></i> Paramètres
+            </a>
+        </nav>
+        <div class="p-4 border-t border-gray-200 dark:border-gray-700">
+            <button onclick="document.documentElement.classList.toggle('dark')" class="w-full flex items-center justify-center gap-2 px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 text-sm text-black dark:text-white transition-colors">
+                <i data-lucide="moon" class="w-4 h-4"></i> Changer le thème
+            </button>
+        </div>
+    </aside>
+
+    <main class="flex-1 flex flex-col overflow-hidden">
+        
+        <!-- PAGE LIVE -->
+        <div id="page-live" class="page-content flex-1 flex flex-col overflow-hidden">
+            <header class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 p-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h2 class="text-xl font-semibold text-black dark:text-white">Flux en direct</h2>
+                        <p class="text-sm text-gray-500 dark:text-gray-400">Analyse des requêtes Docker</p>
+                    </div>
+                    <div class="flex items-center gap-4 bg-gray-50 dark:bg-gray-900 p-3 rounded-xl border border-gray-200 dark:border-gray-600">
+                        <div class="flex items-center gap-2 text-sm">
+                            <i data-lucide="calendar" class="w-4 h-4 text-gray-400"></i>
+                            <span class="text-gray-500">De:</span>
+                            <input type="datetime-local" class="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm outline-none">
+                            <span class="text-gray-500">À:</span>
+                            <input type="datetime-local" class="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm outline-none">
+                            <button class="bg-black hover:bg-gray-800 dark:bg-white dark:hover:bg-gray-200 text-white dark:text-black px-3 py-1 rounded text-sm font-medium transition-colors">Filtrer</button>
+                        </div>
+                        <div class="w-px h-8 bg-gray-300 dark:bg-gray-600"></div>
+                        <button id="playPauseBtn" onclick="toggleStream()" class="flex items-center gap-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 px-4 py-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors shadow-sm">
+                            <i data-lucide="pause" class="w-4 h-4 text-red-500" id="playPauseIcon"></i>
+                            <span id="playPauseText" class="text-sm font-medium text-red-500">Pause</span>
+                        </button>
+                    </div>
+                </div>
+            </header>
+            <div id="logStream" class="flex-1 overflow-y-auto p-4 font-mono text-sm bg-white text-gray-800 dark:bg-black dark:text-green-400 transition-colors duration-200">
+                <div id="welcomeBanner" class="flex flex-col items-center justify-center h-full text-gray-400 dark:text-gray-600">
+                    <i data-lucide="terminal" class="w-12 h-12 mb-4"></i>
+                    <p class="text-lg font-medium">En attente de logs...</p>
+                    <p class="text-sm mt-2">Naviguez sur vos autres conteneurs pour voir les requêtes apparaître.</p>
+                </div>
+                <div id="pausedBanner" class="hidden bg-yellow-50 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-200 p-3 rounded border border-yellow-200 dark:border-yellow-700 text-center font-medium flex items-center justify-center gap-2 my-2">
+                    <i data-lucide="pause-circle" class="w-5 h-5"></i> FLUX EN PAUSE
+                </div>
+            </div>
+        </div>
+
+        <!-- PAGE RAPPORTS -->
+        <div id="page-reports" class="page-content hidden flex-1 overflow-y-auto bg-white dark:bg-gray-900 p-8">
+            <div class="max-w-4xl mx-auto">
+                <div class="flex items-center justify-between mb-8">
+                    <h2 class="text-2xl font-bold text-black dark:text-white flex items-center gap-3">
+                        <i data-lucide="file-text" class="w-6 h-6"></i> Rapports quotidiens
+                    </h2>
+                    <button onclick="location.href='/api/reports/generate'" class="bg-black hover:bg-gray-800 dark:bg-white dark:hover:bg-gray-200 text-white dark:text-black px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2">
+                        <i data-lucide="plus" class="w-4 h-4"></i> Générer un rapport maintenant
+                    </button>
+                </div>
+
+                <div id="reportsList" class="space-y-4">
+                    <!-- Les rapports se chargeront ici dynamiquement -->
+                </div>
+                
+                <div id="noReportsMsg" class="hidden text-center py-20 text-gray-400">
+                    <i data-lucide="file-x" class="w-16 h-16 mx-auto mb-4"></i>
+                    <h3 class="text-xl font-semibold text-black dark:text-white">Aucun rapport pour l'instant</h3>
+                    <p class="mt-2">Les rapports sont générés automatiquement à 00h00 si des attaques ont été détectées.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- PAGE PARAMETRES -->
+        <div id="page-settings" class="page-content hidden flex-1 overflow-y-auto bg-white dark:bg-gray-900 p-8">
+            <div class="max-w-2xl mx-auto">
+                <h2 class="text-2xl font-bold text-black dark:text-white mb-6 flex items-center gap-3">
+                    <i data-lucide="bell" class="w-6 h-6"></i> Configuration des alertes Email
+                </h2>
+                
+                <div id="settingsAlert" class="hidden mb-6 p-4 bg-gray-100 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 text-black dark:text-white font-medium">
+                    Paramètres sauvegardés avec succès !
+                </div>
+
+                <form id="settingsForm" class="space-y-6 bg-gray-50 dark:bg-gray-800 p-6 rounded-xl border border-gray-200 dark:border-gray-700">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Email destinataire des alertes</label>
+                        <input type="email" name="alert_email" class="w-full bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-2 outline-none focus:ring-2 focus:ring-black dark:focus:ring-white" placeholder="alerte@votre-domaine.com" required>
+                    </div>
+                    
+                    <div class="border-t border-gray-200 dark:border-gray-600 pt-6">
+                        <h3 class="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase mb-4">Configuration SMTP (Serveur d'envoi)</h3>
+                    </div>
+
+                    <div class="grid grid-cols-3 gap-4">
+                        <div class="col-span-2">
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Hôte SMTP</label>
+                            <input type="text" name="smtp_host" class="w-full bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-2 outline-none focus:ring-2 focus:ring-black dark:focus:ring-white" placeholder="smtp.gmail.com">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Port</label>
+                            <input type="number" name="smtp_port" class="w-full bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-2 outline-none focus:ring-2 focus:ring-black dark:focus:ring-white" placeholder="587">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Utilisateur SMTP (Adresse email)</label>
+                        <input type="text" name="smtp_user" class="w-full bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-2 outline-none focus:ring-2 focus:ring-black dark:focus:ring-white" placeholder "email@gmail.com">
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Mot de passe SMTP</label>
+                        <input type="password" name="smtp_password" class="w-full bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-2 outline-none focus:ring-2 focus:ring-black dark:focus:ring-white" placeholder="Mot de passe d'application">
+                        <p class="text-xs text-gray-500 mt-1">Si déjà configuré, laissez vide pour garder l'actuel.</p>
+                    </div>
+
+                    <div class="flex justify-end gap-3 pt-4">
+                        <button type="button" onclick="testEmail()" class="px-6 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-black dark:text-white hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+                            Envoyer un test
+                        </button>
+                        <button type="submit" class="px-6 py-2 bg-black hover:bg-gray-800 dark:bg-white dark:hover:bg-gray-200 text-white dark:text-black rounded-lg text-sm font-medium transition-colors">
+                            Sauvegarder
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+    </main>
+
+    <script>
+        let isPlaying = true;
+        const logStream = document.getElementById('logStream');
+        const pausedBanner = document.getElementById('pausedBanner');
+        const welcomeBanner = document.getElementById('welcomeBanner');
+        let logCount = 0;
+
+        // --- GESTION DES PAGES ---
+        function showPage(page) {
+            document.querySelectorAll('.page-content').forEach(p => p.classList.add('hidden'));
+            document.querySelectorAll('.nav-link').forEach(l => { l.classList.remove('bg-gray-100', 'dark:bg-gray-700', 'text-black', 'dark:text-white', 'font-medium'); l.classList.add('text-gray-500', 'dark:text-gray-400'); });
+            document.getElementById(`page-${page}`).classList.remove('hidden');
+            const nav = document.getElementById(`nav-${page}`);
+            nav.classList.add('bg-gray-100', 'dark:bg-gray-700', 'text-black', 'dark:text-white', 'font-medium');
+            nav.classList.remove('text-gray-500', 'dark:text-gray-400');
+            if(page === 'reports') loadReports();            
+            if(page === 'settings') loadSettings();
+        }
+
+        // --- PARAMETRES ---
+        async function loadSettings() {
+            const res = await fetch('/api/settings');
+            const data = await res.json();
+            const form = document.getElementById('settingsForm');
+            form.alert_email.value = data.alert_email || '';
+            form.smtp_host.value = data.smtp_host || 'smtp.gmail.com';
+            form.smtp_port.value = data.smtp_port || '587';
+            form.smtp_user.value = data.smtp_user || '';
+            form.smtp_password.value = data.smtp_password || '';
+        }
+
+        document.getElementById('settingsForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            await fetch('/api/settings', { method: 'POST', body: formData });
+            const alert = document.getElementById('settingsAlert');
+            alert.classList.remove('hidden');
+            setTimeout(() => alert.classList.add('hidden'), 3000);
+            loadSettings(); // Recharge pour afficher ******** au mot de passe
+        });
+
+        async function testEmail() {
+            const btn = event.target; btn.textContent = "Envoi en cours..."; btn.disabled = true;
+            await fetch('/api/settings/test', { method: 'POST' });
+            btn.textContent = "Envoyer un test"; btn.disabled = false;
+            alert("Email de test envoyé ! Vérifiez votre boîte de réception.");
+        }
+
+        // --- WEBSOCKET & TERMINAL ---
+        function escapeHtml(unsafe) { return unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+
+        function connectWebSocket() {
+            const ws = new WebSocket(`ws://${window.location.host}/ws/logs`);
+            ws.onmessage = function(event) {
+                if (!isPlaying) return;
+                if (welcomeBanner) welcomeBanner.remove();
+                const data = JSON.parse(event.data);
+                const line = document.createElement('div');
+                line.className = 'flex gap-3 px-2 py-0.5 hover:bg-gray-100 dark:hover:bg-gray-900 rounded transition-colors';
+                
+                if (data.is_attack) {
+                    line.className += ' bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-400 animate-pulse';
+                    line.innerHTML = `<span class="text-red-400 dark:text-red-600 select-none flex-shrink-0">[${escapeHtml(data.container)}]</span> <span class="font-bold select-none flex-shrink-0">${escapeHtml(data.attack_type)}</span> <span class="font-bold">${escapeHtml(data.ip)}</span> <span class="text-gray-500">-></span> <span class="font-mono underline">${escapeHtml(data.path)}</span>`;
+                } else if (data.is_web) {
+                    let statusClass = 'text-gray-400 dark:text-gray-500';
+                    if (data.status >= 400) statusClass = 'text-yellow-600 dark:text-yellow-400 font-bold';
+                    line.innerHTML = `<span class="text-gray-400 dark:text-gray-500 select-none flex-shrink-0">[${escapeHtml(data.container)}]</span> <span class="text-gray-500 dark:text-gray-600 select-none flex-shrink-0">${escapeHtml(data.ip)}</span> <span class="text-blue-600 dark:text-blue-400 select-none flex-shrink-0">${escapeHtml(data.method)}</span> <span>${escapeHtml(data.path)}</span> <span class="${statusClass} select-none flex-shrink-0">${escapeHtml(data.status)}</span>`;
+                } else {
+                    line.innerHTML = `<span class="text-gray-400 dark:text-gray-500 select-none flex-shrink-0">[${escapeHtml(data.container)}]</span> <span class="whitespace-pre-wrap break-all text-gray-500 dark:text-gray-600">${escapeHtml(data.raw)}</span>`;
+                }
+                logStream.appendChild(line); logCount++;
+                if (logCount > 500) { logStream.removeChild(logStream.firstChild); logCount--; }
+                logStream.scrollTop = logStream.scrollHeight;
+            };
+            ws.onclose = () => setTimeout(connectWebSocket, 2000);
+            ws.onerror = () => ws.close();
+        }
+        connectWebSocket();
+
+        function toggleStream() {
+            isPlaying = !isPlaying;
+            const icon = document.getElementById('playPauseIcon'); const text = document.getElementById('playPauseText');
+            if (isPlaying) { icon.setAttribute('data-lucide', 'pause'); text.textContent = 'Pause'; text.className = 'text-sm font-medium text-red-500'; icon.className = 'w-4 h-4 text-red-500'; pausedBanner.classList.add('hidden'); logStream.scrollTop = logStream.scrollHeight; }
+            else { icon.setAttribute('data-lucide', 'play'); text.textContent = 'Reprendre'; text.className = 'text-sm font-medium text-black dark:text-white'; icon.className = 'w-4 h-4 text-black dark:text-white'; pausedBanner.classList.remove('hidden'); }
+            lucide.createIcons();
+        }
+
+                // --- GESTION DES RAPPORTS ---
+        async function loadReports() {
+            const res = await fetch('/api/reports');
+            const reports = await res.json();
+            const list = document.getElementById('reportsList');
+            const noMsg = document.getElementById('noReportsMsg');
+            
+            list.innerHTML = ''; // On vide la liste
+
+            if (reports.length === 0) {
+                noMsg.classList.remove('hidden');
+                return;
+            }
+            
+            noMsg.classList.add('hidden');
+
+            reports.forEach(report => {
+                // On extrait la date du nom de fichier (ex: "rapport_2026-06-26.html")
+                const dateStr = report.filename.replace('rapport_', '').replace('.html', '');
+                
+                const card = document.createElement('div');
+                card.className = 'flex items-center justify-between p-5 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl hover:shadow-md transition-shadow';
+                card.id = `report-${report.filename}`;
+                
+                card.innerHTML = `
+                    <div class="flex items-center gap-4">
+                        <div class="bg-white dark:bg-gray-900 p-3 rounded-lg border border-gray-200 dark:border-gray-600">
+                            <i data-lucide="file-check" class="w-6 h-6 text-black dark:text-white"></i>
+                        </div>
+                        <div>
+                            <h4 class="font-semibold text-black dark:text-white">Rapport du ${dateStr}</h4>
+                            <p class="text-sm text-gray-500">Analyse des événements critiques de la journée</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <a href="/api/reports/view/${report.filename}" target="_blank" class="px-3 py-2 text-sm font-medium text-black dark:text-white hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors flex items-center gap-1">
+                            <i data-lucide="eye" class="w-4 h-4"></i> Voir
+                        </a>
+                        <a href="/api/reports/view/${report.filename}" download="${report.filename}" class="px-3 py-2 text-sm font-medium text-black dark:text-white hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors flex items-center gap-1">
+                            <i data-lucide="download" class="w-4 h-4"></i> Télécharger
+                        </a>
+                        <button onclick="deleteReport('${report.filename}')" class="px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors flex items-center gap-1">
+                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                `;
+                list.appendChild(card);
+            });
+            
+            lucide.createIcons();
+        }
+
+        async function deleteReport(filename) {
+            if(!confirm("Voulez-vous vraiment supprimer ce rapport ?")) return;
+            await fetch(`/api/reports/${filename}`, { method: 'DELETE' });
+            document.getElementById(`report-${filename}`).remove();
+            // Si la liste est vide, on remontre le message
+            if(document.getElementById('reportsList').children.length === 0) {
+                document.getElementById('noReportsMsg').classList.remove('hidden');
+            }
+        }
+        lucide.createIcons();
+    </script>
+</body>
+</html>

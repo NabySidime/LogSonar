@@ -1,0 +1,51 @@
+# ==========================================
+# LOGSONAR - Données sensibles (A NE JAMAIS COMMIT)
+# ==========================================
+# Ce dossier contient la base de données SQLite et les rapports d'attaques.
+# Il est créé automatiquement par Docker au premier lancement.
+data/
+
+# ==========================================
+# Python
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Environnements virtuels (si tu testes en local hors Docker)
+venv/
+env/
+.venv/
+ENV/
+
+# ==========================================
+# IDE / Éditeurs de code
+# ==========================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ==========================================
+# Systèmes d'exploitation
+# ==========================================
+# Windows
+Thumbs.db
+Desktop.ini
+
+# MacOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+
+# ==========================================
+# Environnement (au cas où tu ajouterais un .env plus tard)
+# ==========================================
+.env
+.env.local
+.env.*.local
