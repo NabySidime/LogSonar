@@ -17,6 +17,11 @@ async def send_critical_alert(event_data):
     smtp_user = await get_setting('smtp_user')
     smtp_password = await get_setting('smtp_password')
 
+    # ← AJOUT : Si SMTP non configuré, on abandonne silencieusement
+    if not smtp_user or not smtp_password:
+        print(f"LogSonar: SMTP non configuré — alerte email ignorée")
+        return
+
     # Création du message
     msg = MIMEMultipart("alternative")
     msg["Subject"] = f"LogSonar Alert : {event_data.get('attack_type')}"
@@ -51,6 +56,7 @@ async def send_critical_alert(event_data):
             print(f"LogSonar: Alerte envoyée à {alert_email}")
         except Exception as e:
             print(f"LogSonar: Erreur d'envoi d'email -> {e}")
+            raise
 
     # On lance l'envoi en arrière-plan
     await asyncio.to_thread(send_mail_sync)
@@ -115,5 +121,6 @@ Si vous n'avez pas demandé cette connexion, ignorez cet email.
             print(f"LogSonar: OTP envoyé à {to_email}")
         except Exception as e:
             print(f"LogSonar: Erreur envoi OTP -> {e}")
+            raise
 
     await asyncio.to_thread(send_sync)

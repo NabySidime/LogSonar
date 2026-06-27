@@ -16,6 +16,9 @@
         @keyframes fadeIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
         .shake { animation: shake 0.5s ease-in-out; }
         @keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-8px); } 75% { transform: translateX(8px); } }
+        .spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid rgba(255,255,255,0.3); border-radius: 50%; border-top-color: #fff; animation: spin 0.6s linear infinite; }
+        .dark .spinner { border-color: rgba(0,0,0,0.2); border-top-color: #000; }
+        @keyframes spin { to { transform: rotate(360deg); } }
     </style>
     <script>
         if (localStorage.getItem('logsonar-theme') === 'dark' || 
@@ -35,7 +38,7 @@
             <span class="text-2xl font-bold tracking-tight">LogSonar</span>
         </div>
 
-        <!-- Setup Mode (si aucun user) -->
+        <!-- Setup Mode -->
         <div id="setupPanel" class="hidden bg-white dark:bg-dark-800 rounded-2xl border border-neutral-200 dark:border-dark-700 p-6 shadow-sm">
             <h2 class="text-lg font-semibold mb-1">Configuration initiale</h2>
             <p class="text-sm text-neutral-400 dark:text-dark-500 mb-6">Créez votre compte superuser</p>
@@ -53,8 +56,9 @@
                     <label class="block text-sm font-medium text-neutral-700 dark:text-dark-300 mb-1.5">Mot de passe</label>
                     <input type="password" name="password" required minlength="8" class="w-full bg-neutral-50 dark:bg-dark-900 border border-neutral-200 dark:border-dark-600 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white focus:border-transparent transition-all" placeholder="Min. 8 caractères">
                 </div>
-                <button type="submit" class="w-full bg-black dark:bg-white hover:bg-neutral-800 dark:hover:bg-neutral-200 text-white dark:text-black font-medium py-2.5 rounded-xl transition-colors">
-                    Créer le compte
+                <button type="submit" class="w-full bg-black dark:bg-white hover:bg-neutral-800 dark:hover:bg-neutral-200 text-white dark:text-black font-medium py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2">
+                    <span class="btn-text">Créer le compte</span>
+                    <span class="btn-spinner hidden"><span class="spinner"></span></span>
                 </button>
             </form>
         </div>
@@ -73,8 +77,9 @@
                     <label class="block text-sm font-medium text-neutral-700 dark:text-dark-300 mb-1.5">Mot de passe</label>
                     <input type="password" name="password" required class="w-full bg-neutral-50 dark:bg-dark-900 border border-neutral-200 dark:border-dark-600 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white focus:border-transparent transition-all" placeholder="••••••••">
                 </div>
-                <button type="submit" class="w-full bg-black dark:bg-white hover:bg-neutral-800 dark:hover:bg-neutral-200 text-white dark:text-black font-medium py-2.5 rounded-xl transition-colors">
-                    Se connecter
+                <button type="submit" class="w-full bg-black dark:bg-white hover:bg-neutral-800 dark:hover:bg-neutral-200 text-white dark:text-black font-medium py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2">
+                    <span class="btn-text">Se connecter</span>
+                    <span class="btn-spinner hidden"><span class="spinner"></span></span>
                 </button>
             </form>
             <p id="loginError" class="hidden mt-3 text-sm text-red-500 text-center"></p>
@@ -84,25 +89,16 @@
         <div id="otpPanel" class="hidden bg-white dark:bg-dark-800 rounded-2xl border border-neutral-200 dark:border-dark-700 p-6 shadow-sm">
             <h2 class="text-lg font-semibold mb-1">Vérification</h2>
             <p class="text-sm text-neutral-400 dark:text-dark-500 mb-2" id="otpMessage">Code envoyé à votre email</p>
-            
-            <!-- Alerte si SMTP non configuré -->
-            <div id="otpConsoleAlert" class="hidden mb-4 p-3 bg-yellow-50 dark:bg-yellow-900/10 border border-yellow-200 dark:border-yellow-900/20 rounded-lg">
-                <p class="text-xs text-yellow-700 dark:text-yellow-400">
-                    <strong>SMTP non configuré</strong><br>
-                    Le code OTP est affiché dans les logs Docker.<br>
-                    Configurez l'email dans Paramètres pour l'activer.
-                </p>
-                <p class="text-xs font-mono mt-2 text-yellow-800 dark:text-yellow-300" id="otpCodeDisplay"></p>
-            </div>
-            
+
             <form id="otpForm" class="space-y-4">
                 <input type="hidden" name="username" id="otpUsername">
                 <div>
                     <label class="block text-sm font-medium text-neutral-700 dark:text-dark-300 mb-1.5">Code à 6 chiffres</label>
-                    <input type="text" name="code" required maxlength="6" inputmode="numeric" pattern="[0-9]{6}" class="w-full bg-neutral-50 dark:bg-dark-900 border border-neutral-200 dark:border-dark-600 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white focus:border-transparent transition-all text-center text-2xl font-mono tracking-[0.5em]" placeholder="000000">
+                    <input type="text" name="code" required maxlength="6" inputmode="numeric" pattern="[0-9]{6}" class="w-full bg-neutral-50 dark:bg-dark-900 border border-neutral-200 dark:border-dark-600 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white focus:border-transparent transition-all text-center text-2xl font-mono tracking-[0.5em]" placeholder="000000" autocomplete="one-time-code">
                 </div>
-                <button type="submit" class="w-full bg-black dark:bg-white hover:bg-neutral-800 dark:hover:bg-neutral-200 text-white dark:text-black font-medium py-2.5 rounded-xl transition-colors">
-                    Vérifier
+                <button type="submit" class="w-full bg-black dark:bg-white hover:bg-neutral-800 dark:hover:bg-neutral-200 text-white dark:text-black font-medium py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2">
+                    <span class="btn-text">Vérifier</span>
+                    <span class="btn-spinner hidden"><span class="spinner"></span></span>
                 </button>
             </form>
             <p id="otpError" class="hidden mt-3 text-sm text-red-500 text-center"></p>
@@ -111,14 +107,19 @@
             </button>
         </div>
 
-        <!-- Footer -->
-        <p class="text-center text-xs text-neutral-400 dark:text-dark-500 mt-6">
-            LogSonar v1.0 — Sécurité Docker
-        </p>
+        <p class="text-center text-xs text-neutral-400 dark:text-dark-500 mt-6">LogSonar v1.0 — Sécurité Docker</p>
     </div>
 
     <script>
-        // Check if setup needed
+        function setBtnLoading(form, isLoading) {
+            const btn = form.querySelector('button[type="submit"]');
+            const text = btn.querySelector('.btn-text');
+            const spinner = btn.querySelector('.btn-spinner');
+            btn.disabled = isLoading;
+            text.classList.toggle('hidden', isLoading);
+            spinner.classList.toggle('hidden', !isLoading);
+        }
+
         async function checkSetup() {
             try {
                 const res = await fetch('/api/auth/check-setup');
@@ -127,75 +128,92 @@
                     document.getElementById('setupPanel').classList.remove('hidden');
                     document.getElementById('loginPanel').classList.add('hidden');
                 }
-            } catch (e) {
-                console.error('Setup check failed', e);
-            }
+            } catch (e) { console.error('Setup check failed', e); }
         }
         checkSetup();
 
-        // Setup form
         document.getElementById('setupForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            const formData = new FormData(e.target);
-            const res = await fetch('/api/auth/setup', { method: 'POST', body: formData });
-            const data = await res.json();
-            if (data.status === 'success') {
-                alert('Compte créé ! Connectez-vous.');
-                location.reload();
-            } else {
-                alert(data.message);
+            const form = e.target;
+            setBtnLoading(form, true);
+            const formData = new FormData(form);
+            try {
+                const res = await fetch('/api/auth/setup', { method: 'POST', body: formData });
+                const data = await res.json();
+                setBtnLoading(form, false);
+                if (data.status === 'success') {
+                    alert('Compte créé ! Connectez-vous.');
+                    location.reload();
+                } else {
+                    alert(data.message || 'Erreur lors de la création');
+                }
+            } catch (err) {
+                setBtnLoading(form, false);
+                alert('Erreur réseau');
             }
         });
 
-        // Login form
         document.getElementById('loginForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            const formData = new FormData(e.target);
-            const res = await fetch('/api/auth/login', { method: 'POST', body: formData });
-            const data = await res.json();
+            const form = e.target;
+            setBtnLoading(form, true);
+            document.getElementById('loginError').classList.add('hidden');
             
-            const errorEl = document.getElementById('loginError');
-            if (data.status === 'otp_required') {
-                document.getElementById('loginPanel').classList.add('hidden');
-                document.getElementById('otpPanel').classList.remove('hidden');
-                document.getElementById('otpUsername').value = data.username;
+            const formData = new FormData(form);
+            try {
+                const res = await fetch('/api/auth/login', { method: 'POST', body: formData });
+                const data = await res.json();
+                setBtnLoading(form, false);
                 
-                // Si pas d'email envoyé
-                if (!data.email_sent) {
-                    document.getElementById('otpMessage').textContent = 'Code de confirmation (voir logs)';
-                    document.getElementById('otpConsoleAlert').classList.remove('hidden');
-                    if (data.code) {
-                        document.getElementById('otpCodeDisplay').textContent = `Code: ${data.code}`;
+                const errorEl = document.getElementById('loginError');
+                if (data.status === 'otp_required') {
+                    document.getElementById('loginPanel').classList.add('hidden');
+                    document.getElementById('otpPanel').classList.remove('hidden');
+                    document.getElementById('otpUsername').value = data.username;
+                    
+                    if (data.email_sent) {
+                        document.getElementById('otpMessage').textContent = 'Code envoyé à votre email';
                     }
+                    lucide.createIcons();
                 } else {
-                    document.getElementById('otpMessage').textContent = 'Code envoyé à votre email';
-                    document.getElementById('otpConsoleAlert').classList.add('hidden');
+                    errorEl.textContent = data.detail || data.message || 'Erreur de connexion';
+                    errorEl.classList.remove('hidden');
+                    document.getElementById('loginPanel').classList.add('shake');
+                    setTimeout(() => document.getElementById('loginPanel').classList.remove('shake'), 500);
                 }
-                
-                errorEl.classList.add('hidden');
-            } else {
-                errorEl.textContent = data.message || 'Erreur de connexion';
-                errorEl.classList.remove('hidden');
-                document.getElementById('loginPanel').classList.add('shake');
-                setTimeout(() => document.getElementById('loginPanel').classList.remove('shake'), 500);
+            } catch (err) {
+                setBtnLoading(form, false);
+                document.getElementById('loginError').textContent = 'Erreur réseau';
+                document.getElementById('loginError').classList.remove('hidden');
             }
         });
 
-        // OTP form
         document.getElementById('otpForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            const formData = new FormData(e.target);
-            const res = await fetch('/api/auth/verify-otp', { method: 'POST', body: formData });
-            const data = await res.json();
-            
-            const errorEl = document.getElementById('otpError');
-            if (data.status === 'success') {
-                window.location.href = '/';
-            } else {
-                errorEl.textContent = data.message || 'Code invalide';
-                errorEl.classList.remove('hidden');
-                document.getElementById('otpPanel').classList.add('shake');
-                setTimeout(() => document.getElementById('otpPanel').classList.remove('shake'), 500);
+            const form = e.target;
+            setBtnLoading(form, true);
+            document.getElementById('otpError').classList.add('hidden');
+
+            const formData = new FormData(form);
+            try {
+                const res = await fetch('/api/auth/verify-otp', { method: 'POST', body: formData });
+                const data = await res.json();
+                setBtnLoading(form, false);
+                
+                const errorEl = document.getElementById('otpError');
+                if (data.status === 'success') {
+                    localStorage.setItem('logsonar-token', data.access_token);
+                    window.location.href = '/';
+                } else {
+                    errorEl.textContent = data.detail || data.message || 'Code invalide';
+                    errorEl.classList.remove('hidden');
+                    document.getElementById('otpPanel').classList.add('shake');
+                    setTimeout(() => document.getElementById('otpPanel').classList.remove('shake'), 500);
+                }
+            } catch (err) {
+                setBtnLoading(form, false);
+                document.getElementById('otpError').textContent = 'Erreur réseau';
+                document.getElementById('otpError').classList.remove('hidden');
             }
         });
 

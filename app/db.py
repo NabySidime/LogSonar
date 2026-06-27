@@ -16,6 +16,7 @@ from cryptography.fernet import Fernet
 DB_PATH         = "data/logsonar.db"
 _CRYPTO_KEY_PATH = "data/.secret_key"
 _ENCRYPTED_KEYS  = {"smtp_password"}
+_RETENTION_DAYS  = 60  # ← Durée de rétention des attaques en jours
 
 # ---------------------------------------------------------------------------
 # CHIFFREMENT FERNET
@@ -180,6 +181,31 @@ async def save_critical_event(event_data: dict) -> None:
         await db.commit()
 
 # ---------------------------------------------------------------------------
+# PURGE — Suppression des vieilles attaques (rétention 60 jours)
+# ---------------------------------------------------------------------------
+async def purge_old_events() -> int:
+    """
+    Supprime les événements critiques datant de plus de _RETENTION_DAYS jours.
+    Retourne le nombre de lignes supprimées.
+    """
+    from datetime import datetime, timedelta
+    cutoff = (datetime.now() - timedelta(days=_RETENTION_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    db = await get_db()
+    async with _db_lock:
+        cursor = await db.execute(
+            "DELETE FROM critical_events WHERE timestamp < ?",
+            (cutoff,)
+        )
+        await db.commit()
+        deleted = cursor.rowcount
+    if deleted > 0:
+        # VACUUM pour récupérer l'espace disque
+        await db.execute("VACUUM")
+        await db.commit()
+        print(f"LogSonar: {deleted} événement(s) supprimé(s) (rétention {_RETENTION_DAYS} jours).")
+    return deleted
+
+# ---------------------------------------------------------------------------
 # LECTURE / ÉCRITURE — SETTINGS
 # ---------------------------------------------------------------------------
 async def get_setting(key: str) -> str:
@@ -231,22 +257,22 @@ async def get_user_by_id(user_id: int) -> Optional[dict]:
 async def create_user(username: str, password_hash: str, email: str, role: str = "user") -> dict:
     """Crée un nouvel utilisateur. Lève une exception si limite atteinte."""
     db = await get_db()
-    
-    # Vérifier la limite de 2 utilisateurs max
-    async with db.execute("SELECT COUNT(*) FROM users") as cursor:
+
+    # Vérifier la limite de 2 utilisateurs ACTIFS max
+    async with db.execute("SELECT COUNT(*) FROM users WHERE is_active = 1") as cursor:
         count = (await cursor.fetchone())[0]
     if count >= 2:
         raise ValueError("Nombre maximum d'utilisateurs atteint (2).")
-    
-    # Vérifier qu'il n'y a pas déjà un superuser
+
+    # Vérifier qu'il n'y a pas déjà un superuser ACTIF
     if role == "superuser":
         async with db.execute(
-            "SELECT COUNT(*) FROM users WHERE role = 'superuser'"
+            "SELECT COUNT(*) FROM users WHERE role = 'superuser' AND is_active = 1"
         ) as cursor:
             superuser_count = (await cursor.fetchone())[0]
         if superuser_count >= 1:
             raise ValueError("Un superuser existe déjà. Impossible d'en créer un second.")
-    
+
     async with _db_lock:
         await db.execute(
             """INSERT INTO users (username, password_hash, email, role)
@@ -254,13 +280,13 @@ async def create_user(username: str, password_hash: str, email: str, role: str =
             (username, password_hash, email, role),
         )
         await db.commit()
-    
+
     return await get_user_by_username(username)
 
 async def count_users() -> int:
-    """Retourne le nombre total d'utilisateurs."""
+    """Retourne le nombre d'utilisateurs actifs."""
     db = await get_db()
-    async with db.execute("SELECT COUNT(*) FROM users") as cursor:
+    async with db.execute("SELECT COUNT(*) FROM users WHERE is_active = 1") as cursor:
         return (await cursor.fetchone())[0]
 
 async def has_superuser() -> bool:

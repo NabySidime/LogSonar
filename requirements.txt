@@ -4,6 +4,8 @@ aiosqlite
 docker
 cryptography
 python-multipart
+python-jose[cryptography]
 pyjwt
 bcrypt
 pyotp
+websockets
