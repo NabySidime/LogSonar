@@ -1,185 +1,769 @@
 <!DOCTYPE html>
-<html lang="fr" class="h-full bg-white">
+<html lang="fr" class="h-full">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LogSonar</title>
+    <title>LogSonar — Surveillance Docker</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
-    <script>tailwind.config = { darkMode: 'class' }</script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        dark: {
+                            950: '#0a0a0a',
+                            900: '#111111',
+                            800: '#171717',
+                            700: '#262626',
+                            600: '#404040',
+                            500: '#525252',
+                            400: '#737373',
+                            300: '#a3a3a3',
+                            200: '#d4d4d4',
+                            100: '#e5e5e5',
+                            50: '#f5f5f5',
+                        }
+                    },
+                    fontFamily: {
+                        mono: ['"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'monospace'],
+                        sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
-        #logStream::-webkit-scrollbar { width: 8px; }
-        #logStream::-webkit-scrollbar-track { background: transparent; }
-        #logStream::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 4px; }
-        .dark #logStream::-webkit-scrollbar-thumb { background: #374151; }
+        * { scrollbar-width: thin; scrollbar-color: #404040 transparent; }
+        *::-webkit-scrollbar { width: 6px; height: 6px; }
+        *::-webkit-scrollbar-track { background: transparent; }
+        *::-webkit-scrollbar-thumb { background: #404040; border-radius: 3px; }
+        *::-webkit-scrollbar-thumb:hover { background: #525252; }
+        
+        body { font-family: 'Inter', system-ui, sans-serif; }
+        
+        .page-transition {
+            animation: fadeIn 0.3s ease-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .card-hover {
+            transition: all 0.2s ease;
+        }
+        .card-hover:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+        }
+        .dark .card-hover:hover {
+            box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+        }
+        
+        .nav-item {
+            transition: all 0.15s ease;
+        }
+        .nav-item:hover {
+            background: rgba(255,255,255,0.06);
+        }
+        .nav-item.active {
+            background: rgba(255,255,255,0.08);
+        }
+        
+        .kpi-value {
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -0.02em;
+        }
+        
+        .log-line {
+            animation: slideIn 0.2s ease-out;
+        }
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateX(-10px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+        
+        .pulse-dot {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .glass-header {
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+        
+        /* Terminal styling */
+        .terminal {
+            background: #0a0a0a;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .terminal .log-entry {
+            border-left: 2px solid transparent;
+            padding-left: 12px;
+            margin-left: -2px;
+        }
+        .terminal .log-entry:hover {
+            background: rgba(255,255,255,0.02);
+        }
+        .terminal .log-entry.attack {
+            background: rgba(239,68,68,0.04);
+        }
+        .terminal .log-entry.attack:hover {
+            background: rgba(239,68,68,0.08);
+        }
+        
+        /* Mobile bottom nav */
+        @media (max-width: 1023px) {
+            .sidebar-desktop { display: none; }
+            .bottom-nav { display: flex; }
+            .main-content { padding-bottom: 72px; }
+        }
+        @media (min-width: 1024px) {
+            .sidebar-desktop { display: flex; }
+            .bottom-nav { display: none; }
+        }
+        
+        /* Chart tooltip dark */
+        .chartjs-tooltip {
+            background: #171717 !important;
+            border: 1px solid #262626 !important;
+            border-radius: 8px !important;
+            color: #e5e5e5 !important;
+        }
     </style>
+    <script>
+        if (localStorage.getItem('logsonar-theme') === 'dark' || 
+            (!localStorage.getItem('logsonar-theme') && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+            document.documentElement.classList.add('dark');
+        }
+    </script>
 </head>
-<body class="h-full flex bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-gray-100 transition-colors duration-200">
+<body class="h-full bg-neutral-50 text-neutral-900 dark:bg-dark-950 dark:text-dark-100 transition-colors duration-300">
 
-    <aside class="w-64 bg-white border-r border-gray-200 dark:bg-gray-800 dark:border-gray-700 flex flex-col">
-        <div class="p-6 border-b border-gray-200 dark:border-gray-700">
-            <h1 class="text-2xl font-bold tracking-tight text-black dark:text-white flex items-center gap-2">
-                <i data-lucide="radar" class="w-7 h-7"></i> LogSonar
-            </h1>
+    <!-- SIDEBAR DESKTOP -->
+    <aside class="sidebar-desktop fixed left-0 top-0 h-full w-16 lg:w-60 bg-white dark:bg-dark-900 border-r border-neutral-200 dark:border-dark-700 flex-col z-40 transition-all duration-300">
+        <div class="h-16 flex items-center justify-center lg:justify-start lg:px-6 border-b border-neutral-200 dark:border-dark-700">
+            <div class="flex items-center gap-3">
+                <div class="w-8 h-8 rounded-lg bg-black dark:bg-white flex items-center justify-center">
+                    <i data-lucide="radar" class="w-5 h-5 text-white dark:text-black"></i>
+                </div>
+                <span class="hidden lg:block font-bold text-lg tracking-tight">LogSonar</span>
+            </div>
         </div>
-        <nav class="flex-1 p-4 space-y-2">
-            <a href="#" onclick="showPage('live')" id="nav-live" class="nav-link flex items-center gap-3 px-4 py-3 bg-gray-100 dark:bg-gray-700 text-black dark:text-white rounded-lg font-medium">
-                <i data-lucide="activity" class="w-5 h-5"></i> Live (Temps réel)
+        
+        <nav class="flex-1 py-4 px-2 lg:px-3 space-y-1">
+            <a href="#" onclick="showPage('dashboard')" id="nav-dashboard" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-neutral-500 dark:text-dark-400">
+                <i data-lucide="layout-dashboard" class="w-5 h-5 flex-shrink-0"></i>
+                <span class="hidden lg:block text-sm font-medium">Dashboard</span>
             </a>
-            <a href="#" onclick="showPage('reports')" id="nav-reports" class="nav-link flex items-center gap-3 px-4 py-3 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-black dark:hover:text-white rounded-lg transition-colors">
-                <i data-lucide="file-text" class="w-5 h-5"></i> Rapports
+            <a href="#" onclick="showPage('live')" id="nav-live" class="nav-item active flex items-center gap-3 px-3 py-2.5 rounded-lg text-neutral-900 dark:text-white">
+                <i data-lucide="activity" class="w-5 h-5 flex-shrink-0"></i>
+                <span class="hidden lg:block text-sm font-medium">Live</span>
+                <span class="hidden lg:flex ml-auto w-2 h-2 rounded-full bg-red-500 pulse-dot"></span>
             </a>
-            <a href="#" onclick="showPage('settings')" id="nav-settings" class="nav-link flex items-center gap-3 px-4 py-3 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-black dark:hover:text-white rounded-lg transition-colors">
-                <i data-lucide="settings" class="w-5 h-5"></i> Paramètres
+            <a href="#" onclick="showPage('reports')" id="nav-reports" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-neutral-500 dark:text-dark-400">
+                <i data-lucide="file-text" class="w-5 h-5 flex-shrink-0"></i>
+                <span class="hidden lg:block text-sm font-medium">Rapports</span>
+            </a>
+            <a href="#" onclick="showPage('settings')" id="nav-settings" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-neutral-500 dark:text-dark-400">
+                <i data-lucide="settings" class="w-5 h-5 flex-shrink-0"></i>
+                <span class="hidden lg:block text-sm font-medium">Paramètres</span>
             </a>
         </nav>
-        <div class="p-4 border-t border-gray-200 dark:border-gray-700">
-            <button onclick="document.documentElement.classList.toggle('dark')" class="w-full flex items-center justify-center gap-2 px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 text-sm text-black dark:text-white transition-colors">
-                <i data-lucide="moon" class="w-4 h-4"></i> Changer le thème
+        
+        <div class="p-3 lg:p-4 border-t border-neutral-200 dark:border-dark-700 space-y-3">
+            <!-- Stats mini -->
+            <div class="hidden lg:block space-y-2">
+                <div class="bg-neutral-50 dark:bg-dark-800 rounded-lg p-3">
+                    <p class="text-[10px] uppercase tracking-wider text-neutral-400 dark:text-dark-500 font-medium mb-1">Logs</p>
+                    <p class="text-lg font-bold kpi-value" id="statTotal">0</p>
+                </div>
+                <div class="bg-red-50 dark:bg-red-900/10 rounded-lg p-3 border border-red-100 dark:border-red-900/20">
+                    <p class="text-[10px] uppercase tracking-wider text-red-400 dark:text-red-500 font-medium mb-1">Attaques</p>
+                    <p class="text-lg font-bold text-red-600 dark:text-red-400 kpi-value" id="statAttacks">0</p>
+                </div>
+            </div>
+            
+            <button onclick="toggleTheme()" class="w-full flex items-center justify-center lg:justify-start gap-2 px-3 py-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-dark-800 transition-colors text-sm">
+                <i data-lucide="moon" class="w-4 h-4" id="themeIcon"></i>
+                <span class="hidden lg:block" id="themeLabel">Sombre</span>
             </button>
         </div>
     </aside>
 
-    <main class="flex-1 flex flex-col overflow-hidden">
+    <!-- MAIN CONTENT -->
+    <main class="main-content lg:ml-60 flex flex-col h-full">
         
-        <!-- PAGE LIVE -->
-        <div id="page-live" class="page-content flex-1 flex flex-col overflow-hidden">
-            <header class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 p-6">
-                <div class="flex items-center justify-between">
-                    <div>
-                        <h2 class="text-xl font-semibold text-black dark:text-white">Flux en direct</h2>
-                        <p class="text-sm text-gray-500 dark:text-gray-400">Analyse des requêtes Docker</p>
-                    </div>
-                    <div class="flex items-center gap-4 bg-gray-50 dark:bg-gray-900 p-3 rounded-xl border border-gray-200 dark:border-gray-600">
-                        <div class="flex items-center gap-2 text-sm">
-                            <i data-lucide="calendar" class="w-4 h-4 text-gray-400"></i>
-                            <span class="text-gray-500">De:</span>
-                            <input type="datetime-local" class="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm outline-none">
-                            <span class="text-gray-500">À:</span>
-                            <input type="datetime-local" class="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm outline-none">
-                            <button class="bg-black hover:bg-gray-800 dark:bg-white dark:hover:bg-gray-200 text-white dark:text-black px-3 py-1 rounded text-sm font-medium transition-colors">Filtrer</button>
+        <!-- MOBILE DRAWER OVERLAY -->
+        <div id="mobileDrawer" class="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60] hidden opacity-0 transition-opacity duration-300" onclick="closeMobileDrawer()">
+            <!-- DRAWER PANEL -->
+            <div id="mobileDrawerPanel" class="absolute left-0 top-0 h-full w-64 bg-white dark:bg-dark-900 border-r border-neutral-200 dark:border-dark-700 transform -translate-x-full transition-transform duration-300 ease-out flex flex-col" onclick="event.stopPropagation()">
+                
+                <!-- Drawer Header -->
+                <div class="h-16 flex items-center justify-between px-5 border-b border-neutral-200 dark:border-dark-700">
+                    <div class="flex items-center gap-3">
+                        <div class="w-8 h-8 rounded-lg bg-black dark:bg-white flex items-center justify-center">
+                            <i data-lucide="radar" class="w-5 h-5 text-white dark:text-black"></i>
                         </div>
-                        <div class="w-px h-8 bg-gray-300 dark:bg-gray-600"></div>
-                        <button id="playPauseBtn" onclick="toggleStream()" class="flex items-center gap-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 px-4 py-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors shadow-sm">
-                            <i data-lucide="pause" class="w-4 h-4 text-red-500" id="playPauseIcon"></i>
-                            <span id="playPauseText" class="text-sm font-medium text-red-500">Pause</span>
-                        </button>
+                        <span class="font-bold text-lg tracking-tight">LogSonar</span>
+                    </div>
+                    <button onclick="closeMobileDrawer()" class="p-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-dark-800 transition-colors">
+                        <i data-lucide="x" class="w-5 h-5 text-neutral-500 dark:text-dark-400"></i>
+                    </button>
+                </div>
+
+                <!-- Drawer Content -->
+                <div class="flex-1 p-4 space-y-3">
+                    <!-- Theme Toggle (seul élément pour l'instant) -->
+                    <button onclick="toggleTheme(); updateDrawerThemeLabel();" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-neutral-100 dark:bg-dark-800 hover:bg-neutral-200 dark:hover:bg-dark-700 transition-colors text-sm font-medium">
+                        <i data-lucide="moon" class="w-5 h-5" id="drawer-theme-icon"></i>
+                        <span id="drawer-theme-label">Mode sombre</span>
+                    </button>
+
+                    <!-- Placeholder pour futurs éléments -->
+                    <!-- 
+                    <button class="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-neutral-100 dark:bg-dark-800 hover:bg-neutral-200 dark:hover:bg-dark-700 transition-colors text-sm font-medium text-neutral-500 dark:text-dark-400">
+                        <i data-lucide="bell" class="w-5 h-5"></i>
+                        <span>Notifications</span>
+                    </button>
+                    -->
+                </div>
+
+                <!-- Drawer Footer -->
+                <div class="p-4 border-t border-neutral-200 dark:border-dark-700">
+                    <p class="text-[10px] text-neutral-400 dark:text-dark-500 text-center">LogSonar v1.0</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- TOP HEADER -->
+        <header class="h-16 glass-header bg-white/80 dark:bg-dark-900/80 border-b border-neutral-200 dark:border-dark-700 flex items-center justify-between px-4 lg:px-6 sticky top-0 z-30">
+            <!-- GAUCHE : Logo mobile + Titre -->
+            <div class="flex items-center gap-3 min-w-0">
+                <!-- Logo mobile (visible uniquement sur < lg) -->
+                <div class="lg:hidden flex items-center justify-center w-8 h-8 rounded-lg bg-black dark:bg-white flex-shrink-0">
+                    <i data-lucide="radar" class="w-4 h-4 text-white dark:text-black"></i>
+                </div>
+                <div class="min-w-0">
+                    <h1 class="text-sm font-semibold text-neutral-900 dark:text-white truncate" id="pageTitle">Flux en direct</h1>
+                    <p class="text-xs text-neutral-400 dark:text-dark-500 truncate hidden sm:block" id="pageSubtitle">Surveillance temps réel des conteneurs Docker</p>
+                </div>
+            </div>
+            
+            <!-- DROITE : Actions -->
+            <div class="flex items-center gap-2 flex-shrink-0">
+                <!-- Bouton menu mobile -->
+                <button onclick="openMobileDrawer()" class="lg:hidden p-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-dark-800 transition-colors">
+                    <i data-lucide="menu" class="w-5 h-5 text-neutral-600 dark:text-dark-300"></i>
+                </button>
+                
+                <!-- WS Status -->
+                <div class="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-neutral-100 dark:bg-dark-800 text-xs">
+                    <span class="w-1.5 h-1.5 rounded-full bg-green-500 pulse-dot" id="wsIndicator"></span>
+                    <span class="text-neutral-500 dark:text-dark-400" id="wsStatus">Connecté</span>
+                </div>
+                
+                <!-- Actions contextuelles -->
+                <div id="headerActions" class="flex items-center gap-2">
+                    <button onclick="toggleStream()" id="playPauseBtn" class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm font-medium hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors">
+                        <i data-lucide="pause" class="w-4 h-4" id="playPauseIcon"></i>
+                        <span class="hidden sm:inline" id="playPauseText">Pause</span>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- PAGE DASHBOARD -->
+        <div id="page-dashboard" class="page-content hidden flex-1 overflow-y-auto bg-neutral-50 dark:bg-dark-950">
+            <div class="p-6 lg:p-8 max-w-7xl mx-auto space-y-6">
+                
+                <!-- KPI ROW -->
+                <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div class="card-hover bg-white dark:bg-dark-800 rounded-xl border border-neutral-200 dark:border-dark-700 p-5">
+                        <div class="flex items-center justify-between mb-3">
+                            <span class="text-[10px] uppercase tracking-wider text-neutral-400 dark:text-dark-500 font-semibold">Attaques auj.</span>
+                            <div class="w-8 h-8 rounded-lg bg-red-50 dark:bg-red-900/20 flex items-center justify-center">
+                                <i data-lucide="shield-alert" class="w-4 h-4 text-red-500"></i>
+                            </div>
+                        </div>
+                        <p class="text-3xl font-bold kpi-value text-neutral-900 dark:text-white" id="kpiAttacks">—</p>
+                        <p class="text-xs text-neutral-400 dark:text-dark-500 mt-1">événements critiques</p>
+                    </div>
+
+                    <div class="card-hover bg-white dark:bg-dark-800 rounded-xl border border-neutral-200 dark:border-dark-700 p-5">
+                        <div class="flex items-center justify-between mb-3">
+                            <span class="text-[10px] uppercase tracking-wider text-neutral-400 dark:text-dark-500 font-semibold">IPs uniques</span>
+                            <div class="w-8 h-8 rounded-lg bg-orange-50 dark:bg-orange-900/20 flex items-center justify-center">
+                                <i data-lucide="globe" class="w-4 h-4 text-orange-500"></i>
+                            </div>
+                        </div>
+                        <p class="text-3xl font-bold kpi-value text-neutral-900 dark:text-white" id="kpiIPs">—</p>
+                        <p class="text-xs text-neutral-400 dark:text-dark-500 mt-1">sources distinctes</p>
+                    </div>
+
+                    <div class="card-hover bg-white dark:bg-dark-800 rounded-xl border border-neutral-200 dark:border-dark-700 p-5">
+                        <div class="flex items-center justify-between mb-3">
+                            <span class="text-[10px] uppercase tracking-wider text-neutral-400 dark:text-dark-500 font-semibold">Type dominant</span>
+                            <div class="w-8 h-8 rounded-lg bg-yellow-50 dark:bg-yellow-900/20 flex items-center justify-center">
+                                <i data-lucide="zap" class="w-4 h-4 text-yellow-500"></i>
+                            </div>
+                        </div>
+                        <p class="text-lg font-bold text-neutral-900 dark:text-white leading-tight" id="kpiTopType">—</p>
+                        <p class="text-xs text-neutral-400 dark:text-dark-500 mt-1">plus fréquent</p>
+                    </div>
+
+                    <div class="card-hover bg-white dark:bg-dark-800 rounded-xl border border-neutral-200 dark:border-dark-700 p-5">
+                        <div class="flex items-center justify-between mb-3">
+                            <span class="text-[10px] uppercase tracking-wider text-neutral-400 dark:text-dark-500 font-semibold">Cible</span>
+                            <div class="w-8 h-8 rounded-lg bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center">
+                                <i data-lucide="box" class="w-4 h-4 text-blue-500"></i>
+                            </div>
+                        </div>
+                        <p class="text-lg font-bold font-mono text-neutral-900 dark:text-white leading-tight" id="kpiContainer">—</p>
+                        <p class="text-xs text-neutral-400 dark:text-dark-500 mt-1">conteneur le plus attaqué</p>
                     </div>
                 </div>
-            </header>
-            <div id="logStream" class="flex-1 overflow-y-auto p-4 font-mono text-sm bg-white text-gray-800 dark:bg-black dark:text-green-400 transition-colors duration-200">
-                <div id="welcomeBanner" class="flex flex-col items-center justify-center h-full text-gray-400 dark:text-gray-600">
-                    <i data-lucide="terminal" class="w-12 h-12 mb-4"></i>
-                    <p class="text-lg font-medium">En attente de logs...</p>
-                    <p class="text-sm mt-2">Naviguez sur vos autres conteneurs pour voir les requêtes apparaître.</p>
+
+                <!-- CHARTS ROW 1 -->
+                <div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
+                    <div class="lg:col-span-3 bg-white dark:bg-dark-800 rounded-xl border border-neutral-200 dark:border-dark-700 p-6 card-hover">
+                        <div class="flex items-center justify-between mb-5">
+                            <div>
+                                <h3 class="text-sm font-semibold text-neutral-900 dark:text-white">Tendance 7 jours</h3>
+                                <p class="text-xs text-neutral-400 dark:text-dark-500 mt-0.5">Évolution des attaques</p>
+                            </div>
+                        </div>
+                        <div class="relative h-52">
+                            <canvas id="chartTrend"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="lg:col-span-2 bg-white dark:bg-dark-800 rounded-xl border border-neutral-200 dark:border-dark-700 p-6 card-hover">
+                        <div class="flex items-center justify-between mb-5">
+                            <div>
+                                <h3 class="text-sm font-semibold text-neutral-900 dark:text-white">Aujourd'hui par heure</h3>
+                                <p class="text-xs text-neutral-400 dark:text-dark-500 mt-0.5">Distribution horaire</p>
+                            </div>
+                        </div>
+                        <div class="relative h-52">
+                            <canvas id="chartHour"></canvas>
+                        </div>
+                    </div>
                 </div>
-                <div id="pausedBanner" class="hidden bg-yellow-50 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-200 p-3 rounded border border-yellow-200 dark:border-yellow-700 text-center font-medium flex items-center justify-center gap-2 my-2">
-                    <i data-lucide="pause-circle" class="w-5 h-5"></i> FLUX EN PAUSE
+
+                <!-- CHARTS ROW 2 -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div class="bg-white dark:bg-dark-800 rounded-xl border border-neutral-200 dark:border-dark-700 p-6 card-hover">
+                        <div class="flex items-center justify-between mb-5">
+                            <div>
+                                <h3 class="text-sm font-semibold text-neutral-900 dark:text-white">Types d'attaque</h3>
+                                <p class="text-xs text-neutral-400 dark:text-dark-500 mt-0.5">Répartition globale</p>
+                            </div>
+                        </div>
+                        <div class="relative h-56">
+                            <canvas id="chartTypes"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="bg-white dark:bg-dark-800 rounded-xl border border-neutral-200 dark:border-dark-700 p-6 card-hover">
+                        <div class="flex items-center justify-between mb-5">
+                            <div>
+                                <h3 class="text-sm font-semibold text-neutral-900 dark:text-white">Top 5 IPs attaquantes</h3>
+                                <p class="text-xs text-neutral-400 dark:text-dark-500 mt-0.5">Toutes périodes</p>
+                            </div>
+                        </div>
+                        <div id="topIpsChart" class="space-y-4"></div>
+                    </div>
+                </div>
+
+                <!-- RECENT FEED -->
+                <div class="bg-white dark:bg-dark-800 rounded-xl border border-neutral-200 dark:border-dark-700 p-6 card-hover">
+                    <div class="flex items-center justify-between mb-5">
+                        <div>
+                            <h3 class="text-sm font-semibold text-neutral-900 dark:text-white">Dernières attaques</h3>
+                            <p class="text-xs text-neutral-400 dark:text-dark-500 mt-0.5">8 événements les plus récents</p>
+                        </div>
+                    </div>
+                    <div id="recentFeed" class="space-y-2">
+                        <p class="text-neutral-400 text-sm text-center py-8">Chargement...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- PAGE LIVE -->
+        <div id="page-live" class="page-content flex-1 flex flex-col overflow-hidden bg-white dark:bg-dark-950">
+            <div class="terminal flex-1 overflow-y-auto p-4 text-sm" id="logStream">
+                <div id="welcomeBanner" class="flex flex-col items-center justify-center h-full text-neutral-400 dark:text-dark-600 select-none">
+                    <div class="w-16 h-16 rounded-2xl bg-neutral-100 dark:bg-dark-800 flex items-center justify-center mb-4">
+                        <i data-lucide="terminal" class="w-8 h-8"></i>
+                    </div>
+                    <p class="text-lg font-medium text-neutral-600 dark:text-dark-300">En attente de logs...</p>
+                    <p class="text-sm mt-2 text-neutral-400 dark:text-dark-500">LogSonar surveille vos conteneurs Docker</p>
+                </div>
+                <div id="pausedBanner" class="hidden sticky top-0 z-10 bg-yellow-500/10 dark:bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 px-4 py-2 rounded-lg border border-yellow-500/20 text-center text-sm font-medium flex items-center justify-center gap-2 backdrop-blur">
+                    <i data-lucide="pause-circle" class="w-4 h-4"></i> FLUX EN PAUSE
                 </div>
             </div>
         </div>
 
         <!-- PAGE RAPPORTS -->
-        <div id="page-reports" class="page-content hidden flex-1 overflow-y-auto bg-white dark:bg-gray-900 p-8">
+        <div id="page-reports" class="page-content hidden flex-1 overflow-y-auto bg-neutral-50 dark:bg-dark-950 p-6 lg:p-8">
             <div class="max-w-4xl mx-auto">
                 <div class="flex items-center justify-between mb-8">
-                    <h2 class="text-2xl font-bold text-black dark:text-white flex items-center gap-3">
-                        <i data-lucide="file-text" class="w-6 h-6"></i> Rapports quotidiens
-                    </h2>
-                    <button onclick="location.href='/api/reports/generate'" class="bg-black hover:bg-gray-800 dark:bg-white dark:hover:bg-gray-200 text-white dark:text-black px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2">
-                        <i data-lucide="plus" class="w-4 h-4"></i> Générer un rapport maintenant
+                    <div>
+                        <h2 class="text-2xl font-bold text-neutral-900 dark:text-white">Rapports quotidiens</h2>
+                        <p class="text-sm text-neutral-400 dark:text-dark-500 mt-1">Analyses pédagogiques des attaques détectées</p>
+                    </div>
+                    <button onclick="generateReport()" id="generateBtn" class="flex items-center gap-2 bg-neutral-900 dark:bg-white hover:bg-black dark:hover:bg-neutral-200 text-white dark:text-black px-4 py-2.5 rounded-lg text-sm font-medium transition-all shadow-sm hover:shadow-md">
+                        <i data-lucide="plus" class="w-4 h-4"></i>
+                        <span class="hidden sm:inline">Générer</span>
                     </button>
                 </div>
 
-                <div id="reportsList" class="space-y-4">
-                    <!-- Les rapports se chargeront ici dynamiquement -->
-                </div>
-                
-                <div id="noReportsMsg" class="hidden text-center py-20 text-gray-400">
-                    <i data-lucide="file-x" class="w-16 h-16 mx-auto mb-4"></i>
-                    <h3 class="text-xl font-semibold text-black dark:text-white">Aucun rapport pour l'instant</h3>
-                    <p class="mt-2">Les rapports sont générés automatiquement à 00h00 si des attaques ont été détectées.</p>
+                <div id="reportGenFeedback" class="hidden mb-4 p-4 rounded-xl border text-sm font-medium"></div>
+
+                <div id="reportsList" class="space-y-3"></div>
+
+                <div id="noReportsMsg" class="hidden text-center py-20">
+                    <div class="w-20 h-20 rounded-2xl bg-neutral-100 dark:bg-dark-800 flex items-center justify-center mx-auto mb-4">
+                        <i data-lucide="file-x" class="w-10 h-10 text-neutral-300 dark:text-dark-600"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold text-neutral-900 dark:text-white">Aucun rapport</h3>
+                    <p class="mt-2 text-sm text-neutral-400 dark:text-dark-500">Les rapports sont générés automatiquement à 00h00</p>
                 </div>
             </div>
         </div>
 
         <!-- PAGE PARAMETRES -->
-        <div id="page-settings" class="page-content hidden flex-1 overflow-y-auto bg-white dark:bg-gray-900 p-8">
+        <div id="page-settings" class="page-content hidden flex-1 overflow-y-auto bg-neutral-50 dark:bg-dark-950 p-6 lg:p-8">
             <div class="max-w-2xl mx-auto">
-                <h2 class="text-2xl font-bold text-black dark:text-white mb-6 flex items-center gap-3">
-                    <i data-lucide="bell" class="w-6 h-6"></i> Configuration des alertes Email
-                </h2>
-                
-                <div id="settingsAlert" class="hidden mb-6 p-4 bg-gray-100 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 text-black dark:text-white font-medium">
-                    Paramètres sauvegardés avec succès !
+                <div class="mb-8">
+                    <h2 class="text-2xl font-bold text-neutral-900 dark:text-white">Configuration</h2>
+                    <p class="text-sm text-neutral-400 dark:text-dark-500 mt-1">Alertes email et serveur SMTP</p>
                 </div>
 
-                <form id="settingsForm" class="space-y-6 bg-gray-50 dark:bg-gray-800 p-6 rounded-xl border border-gray-200 dark:border-gray-700">
+                <div id="settingsAlert" class="hidden mb-6 p-4 rounded-xl border text-sm font-medium"></div>
+
+                <div id="settingsErrors" class="hidden mb-4 p-4 bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-900/20 rounded-xl text-red-700 dark:text-red-400 text-sm">
+                    <p class="font-bold mb-1">Erreurs :</p>
+                    <ul id="settingsErrorList" class="list-disc list-inside space-y-1"></ul>
+                </div>
+
+                <form id="settingsForm" class="space-y-6 bg-white dark:bg-dark-800 p-6 lg:p-8 rounded-xl border border-neutral-200 dark:border-dark-700">
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Email destinataire des alertes</label>
-                        <input type="email" name="alert_email" class="w-full bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-2 outline-none focus:ring-2 focus:ring-black dark:focus:ring-white" placeholder="alerte@votre-domaine.com" required>
-                    </div>
-                    
-                    <div class="border-t border-gray-200 dark:border-gray-600 pt-6">
-                        <h3 class="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase mb-4">Configuration SMTP (Serveur d'envoi)</h3>
+                        <label class="block text-sm font-medium text-neutral-700 dark:text-dark-300 mb-2">Email destinataire</label>
+                        <input type="email" name="alert_email" class="w-full bg-neutral-50 dark:bg-dark-900 border border-neutral-200 dark:border-dark-600 rounded-lg px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white focus:border-transparent transition-all" placeholder="alerte@domaine.com">
                     </div>
 
-                    <div class="grid grid-cols-3 gap-4">
-                        <div class="col-span-2">
-                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Hôte SMTP</label>
-                            <input type="text" name="smtp_host" class="w-full bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-2 outline-none focus:ring-2 focus:ring-black dark:focus:ring-white" placeholder="smtp.gmail.com">
+                    <div class="border-t border-neutral-200 dark:border-dark-700 pt-6">
+                        <h3 class="text-xs font-bold text-neutral-400 dark:text-dark-500 uppercase tracking-wider mb-4">Configuration SMTP</h3>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        <div class="sm:col-span-2">
+                            <label class="block text-sm font-medium text-neutral-700 dark:text-dark-300 mb-2">Hôte SMTP</label>
+                            <input type="text" name="smtp_host" class="w-full bg-neutral-50 dark:bg-dark-900 border border-neutral-200 dark:border-dark-600 rounded-lg px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white focus:border-transparent transition-all" placeholder="smtp.gmail.com">
                         </div>
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Port</label>
-                            <input type="number" name="smtp_port" class="w-full bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-2 outline-none focus:ring-2 focus:ring-black dark:focus:ring-white" placeholder="587">
+                            <label class="block text-sm font-medium text-neutral-700 dark:text-dark-300 mb-2">Port</label>
+                            <input type="number" name="smtp_port" min="1" max="65535" class="w-full bg-neutral-50 dark:bg-dark-900 border border-neutral-200 dark:border-dark-600 rounded-lg px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white focus:border-transparent transition-all" placeholder="587">
                         </div>
                     </div>
 
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Utilisateur SMTP (Adresse email)</label>
-                        <input type="text" name="smtp_user" class="w-full bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-2 outline-none focus:ring-2 focus:ring-black dark:focus:ring-white" placeholder "email@gmail.com">
+                        <label class="block text-sm font-medium text-neutral-700 dark:text-dark-300 mb-2">Utilisateur SMTP</label>
+                        <input type="email" name="smtp_user" class="w-full bg-neutral-50 dark:bg-dark-900 border border-neutral-200 dark:border-dark-600 rounded-lg px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white focus:border-transparent transition-all" placeholder="email@gmail.com">
                     </div>
 
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Mot de passe SMTP</label>
-                        <input type="password" name="smtp_password" class="w-full bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-2 outline-none focus:ring-2 focus:ring-black dark:focus:ring-white" placeholder="Mot de passe d'application">
-                        <p class="text-xs text-gray-500 mt-1">Si déjà configuré, laissez vide pour garder l'actuel.</p>
+                        <label class="block text-sm font-medium text-neutral-700 dark:text-dark-300 mb-2">Mot de passe SMTP</label>
+                        <input type="password" name="smtp_password" class="w-full bg-neutral-50 dark:bg-dark-900 border border-neutral-200 dark:border-dark-600 rounded-lg px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white focus:border-transparent transition-all" placeholder="Mot de passe d'application">
+                        <p class="text-xs text-neutral-400 dark:text-dark-500 mt-2 flex items-center gap-1.5">
+                            <i data-lucide="lock" class="w-3 h-3"></i>
+                            Chiffré AES-128. Laissez vide pour conserver l'actuel.
+                        </p>
                     </div>
 
-                    <div class="flex justify-end gap-3 pt-4">
-                        <button type="button" onclick="testEmail()" class="px-6 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-black dark:text-white hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+                    <div class="flex flex-col sm:flex-row justify-end gap-3 pt-4">
+                        <button type="button" onclick="testEmail(this)" class="px-6 py-2.5 border border-neutral-300 dark:border-dark-600 rounded-lg text-sm font-medium text-neutral-700 dark:text-dark-300 hover:bg-neutral-50 dark:hover:bg-dark-700 transition-colors">
                             Envoyer un test
                         </button>
-                        <button type="submit" class="px-6 py-2 bg-black hover:bg-gray-800 dark:bg-white dark:hover:bg-gray-200 text-white dark:text-black rounded-lg text-sm font-medium transition-colors">
+                        <button type="submit" class="px-6 py-2.5 bg-neutral-900 dark:bg-white hover:bg-black dark:hover:bg-neutral-200 text-white dark:text-black rounded-lg text-sm font-medium transition-colors">
                             Sauvegarder
                         </button>
                     </div>
                 </form>
             </div>
         </div>
-
     </main>
 
+    <!-- BOTTOM NAV MOBILE -->
+    <nav class="bottom-nav fixed bottom-0 left-0 right-0 h-16 bg-white/90 dark:bg-dark-900/90 backdrop-blur-lg border-t border-neutral-200 dark:border-dark-700 z-50 items-center justify-around px-2">
+        <a href="#" onclick="showPage('dashboard')" id="nav-bottom-dashboard" class="flex flex-col items-center gap-1 py-2 px-3 rounded-lg text-neutral-400 dark:text-dark-500">
+            <i data-lucide="layout-dashboard" class="w-5 h-5"></i>
+            <span class="text-[10px] font-medium">Dashboard</span>
+        </a>
+        <a href="#" onclick="showPage('live')" id="nav-bottom-live" class="flex flex-col items-center gap-1 py-2 px-3 rounded-lg text-neutral-900 dark:text-white">
+            <i data-lucide="activity" class="w-5 h-5"></i>
+            <span class="text-[10px] font-medium">Live</span>
+        </a>
+        <a href="#" onclick="showPage('reports')" id="nav-bottom-reports" class="flex flex-col items-center gap-1 py-2 px-3 rounded-lg text-neutral-400 dark:text-dark-500">
+            <i data-lucide="file-text" class="w-5 h-5"></i>
+            <span class="text-[10px] font-medium">Rapports</span>
+        </a>
+        <a href="#" onclick="showPage('settings')" id="nav-bottom-settings" class="flex flex-col items-center gap-1 py-2 px-3 rounded-lg text-neutral-400 dark:text-dark-500">
+            <i data-lucide="settings" class="w-5 h-5"></i>
+            <span class="text-[10px] font-medium">Paramètres</span>
+        </a>
+    </nav>
+
     <script>
+        // ==================== STATE ====================
         let isPlaying = true;
+        let logCount = 0;
+        let attackCount = 0;
         const logStream = document.getElementById('logStream');
         const pausedBanner = document.getElementById('pausedBanner');
         const welcomeBanner = document.getElementById('welcomeBanner');
-        let logCount = 0;
+        let _charts = {};
+        let _dashTimer = null;
+        let currentPage = 'live';
 
-        // --- GESTION DES PAGES ---
+        // ==================== THEME ====================
+        function toggleTheme() {
+            const isDark = document.documentElement.classList.toggle('dark');
+            localStorage.setItem('logsonar-theme', isDark ? 'dark' : 'light');
+            updateThemeButton(isDark);
+            // Re-render charts with new theme
+            if (currentPage === 'dashboard') loadDashboard();
+        }
+        
+        function updateThemeButton(isDark) {
+            const icon = document.getElementById('themeIcon');
+            const label = document.getElementById('themeLabel');
+            icon.setAttribute('data-lucide', isDark ? 'sun' : 'moon');
+            if (label) label.textContent = isDark ? 'Clair' : 'Sombre';
+            lucide.createIcons();
+        }
+        
+        updateThemeButton(document.documentElement.classList.contains('dark'));
+
+        // ==================== NAVIGATION ====================
+        const pageTitles = {
+            dashboard: { title: 'Dashboard', subtitle: 'Vue d\'ensemble de la sécurité' },
+            live: { title: 'Flux en direct', subtitle: 'Surveillance temps réel des conteneurs Docker' },
+            reports: { title: 'Rapports', subtitle: 'Analyses quotidiennes des attaques' },
+            settings: { title: 'Paramètres', subtitle: 'Configuration des alertes email' }
+        };
+
         function showPage(page) {
+            currentPage = page;
+            
+            // Hide all pages
             document.querySelectorAll('.page-content').forEach(p => p.classList.add('hidden'));
-            document.querySelectorAll('.nav-link').forEach(l => { l.classList.remove('bg-gray-100', 'dark:bg-gray-700', 'text-black', 'dark:text-white', 'font-medium'); l.classList.add('text-gray-500', 'dark:text-gray-400'); });
-            document.getElementById(`page-${page}`).classList.remove('hidden');
+            
+            // Update nav states
+            document.querySelectorAll('.nav-item').forEach(l => {
+                l.classList.remove('active', 'text-neutral-900', 'dark:text-white');
+                l.classList.add('text-neutral-500', 'dark:text-dark-400');
+            });
+            document.querySelectorAll('[id^="nav-bottom-"]').forEach(l => {
+                l.classList.remove('text-neutral-900', 'dark:text-white');
+                l.classList.add('text-neutral-400', 'dark:text-dark-500');
+            });
+            
+            // Show page
+            const pageEl = document.getElementById(`page-${page}`);
+            pageEl.classList.remove('hidden');
+            pageEl.classList.add('page-transition');
+            
+            // Update nav
             const nav = document.getElementById(`nav-${page}`);
-            nav.classList.add('bg-gray-100', 'dark:bg-gray-700', 'text-black', 'dark:text-white', 'font-medium');
-            nav.classList.remove('text-gray-500', 'dark:text-gray-400');
-            if(page === 'reports') loadReports();            
-            if(page === 'settings') loadSettings();
+            if (nav) {
+                nav.classList.add('active', 'text-neutral-900', 'dark:text-white');
+                nav.classList.remove('text-neutral-500', 'dark:text-dark-400');
+            }
+            const bottomNav = document.getElementById(`nav-bottom-${page}`);
+            if (bottomNav) {
+                bottomNav.classList.add('text-neutral-900', 'dark:text-white');
+                bottomNav.classList.remove('text-neutral-400', 'dark:text-dark-500');
+            }
+            
+            // Update header
+            document.getElementById('pageTitle').textContent = pageTitles[page].title;
+            document.getElementById('pageSubtitle').textContent = pageTitles[page].subtitle;
+            
+            // Update header actions
+            const actionsDiv = document.getElementById('headerActions');
+            if (page === 'live') {
+                actionsDiv.innerHTML = `
+                    <button onclick="toggleStream()" id="playPauseBtn" class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm font-medium hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors">
+                        <i data-lucide="pause" class="w-4 h-4" id="playPauseIcon"></i>
+                        <span class="hidden sm:inline" id="playPauseText">Pause</span>
+                    </button>
+                `;
+            } else if (page === 'dashboard') {
+                actionsDiv.innerHTML = `
+                    <button onclick="loadDashboard()" class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-neutral-100 dark:bg-dark-800 text-neutral-700 dark:text-dark-300 text-sm font-medium hover:bg-neutral-200 dark:hover:bg-dark-700 transition-colors">
+                        <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+                        <span class="hidden sm:inline">Rafraîchir</span>
+                    </button>
+                `;
+            } else if (page === 'reports') {
+                actionsDiv.innerHTML = `
+                    <button onclick="generateReport()" class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-neutral-900 dark:bg-white text-white dark:text-black text-sm font-medium hover:bg-black dark:hover:bg-neutral-200 transition-colors">
+                        <i data-lucide="plus" class="w-4 h-4"></i>
+                        <span class="hidden sm:inline">Générer</span>
+                    </button>
+                `;
+            } else {
+                actionsDiv.innerHTML = '';
+            }
+            
+            lucide.createIcons();
+            
+            // Stop dash timer
+            _stopDashTimer();
+            
+            if (page === 'dashboard') { loadDashboard(); _startDashTimer(); }
+            if (page === 'reports') loadReports();
+            if (page === 'settings') loadSettings();
         }
 
-        // --- PARAMETRES ---
+        // ==================== WEBSOCKET ====================
+        function setWsStatus(connected) {
+            const dot = document.getElementById('wsIndicator');
+            const text = document.getElementById('wsStatus');
+            if (!dot || !text) return;
+            if (connected) {
+                dot.className = 'w-1.5 h-1.5 rounded-full bg-green-500 pulse-dot';
+                text.textContent = 'Connecté';
+                text.className = 'text-neutral-500 dark:text-dark-400';
+            } else {
+                dot.className = 'w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse';
+                text.textContent = 'Reconnexion...';
+                text.className = 'text-red-500';
+            }
+        }
+
+        async function connectWebSocket() {
+            let token = '';
+            try {
+                const res = await fetch('/api/ws-token');
+                const data = await res.json();
+                token = data.token;
+            } catch (e) {
+                console.error('Token WS error', e);
+                setTimeout(connectWebSocket, 3000);
+                return;
+            }
+
+            const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+            const ws = new WebSocket(`${proto}://${window.location.host}/ws/logs?token=${encodeURIComponent(token)}`);
+
+            ws.onopen = () => setWsStatus(true);
+            ws.onclose = (e) => {
+                setWsStatus(false);
+                if (e.code === 4401) {
+                    console.error('Token refusé');
+                    return;
+                }
+                setTimeout(connectWebSocket, 2000);
+            };
+            ws.onerror = () => ws.close();
+
+            ws.onmessage = function(event) {
+                if (!isPlaying) return;
+                if (welcomeBanner) welcomeBanner.remove();
+
+                const data = JSON.parse(event.data);
+                logCount++;
+                document.getElementById('statTotal').textContent = logCount;
+                const drawerTotal = document.getElementById('drawer-statTotal');
+                if (drawerTotal) drawerTotal.textContent = logCount;
+
+                const line = document.createElement('div');
+                line.className = 'log-entry py-1 px-2 rounded log-line';
+
+                if (data.is_attack) {
+                    attackCount++;
+                    document.getElementById('statAttacks').textContent = attackCount;
+                    const drawerAttacks = document.getElementById('drawer-statAttacks');
+                    if (drawerAttacks) drawerAttacks.textContent = attackCount;
+                    line.classList.add('attack');
+                    line.innerHTML = `
+                        <span class="text-red-400/60 dark:text-red-600/60 select-none text-xs">[${esc(data.container)}]</span>
+                        <span class="font-bold text-red-500 dark:text-red-400 select-none text-xs ml-2">⚠ ${esc(data.attack_type)}</span>
+                        <span class="font-bold text-white ml-2">${esc(data.ip)}</span>
+                        <span class="text-neutral-400 dark:text-dark-500 mx-1">→</span>
+                        <span class="font-mono text-neutral-700 dark:text-dark-300 underline">${esc(data.path)}</span>
+                        <span class="text-neutral-400 dark:text-dark-600 text-xs ml-auto flex-shrink-0">${esc(data.timestamp)}</span>`;
+                } else if (data.is_web) {
+                    let statusClass = 'text-neutral-400 dark:text-dark-500';
+                    if (parseInt(data.status) >= 500) statusClass = 'text-red-500 dark:text-red-400 font-bold';
+                    else if (parseInt(data.status) >= 400) statusClass = 'text-yellow-600 dark:text-yellow-400 font-bold';
+                    else if (parseInt(data.status) >= 200 && parseInt(data.status) < 300) statusClass = 'text-green-600 dark:text-green-400';
+                    line.innerHTML = `
+                        <span class="text-neutral-400/60 dark:text-dark-600/60 select-none text-xs">[${esc(data.container)}]</span>
+                        <span class="text-neutral-400 dark:text-dark-600 select-none text-xs ml-2">${esc(data.ip)}</span>
+                        <span class="text-blue-500 dark:text-blue-400 select-none text-xs font-medium ml-2">${esc(data.method)}</span>
+                        <span class="text-neutral-600 dark:text-dark-300 ml-2 truncate">${esc(data.path)}</span>
+                        <span class="${statusClass} select-none text-xs ml-auto flex-shrink-0">${esc(data.status)}</span>`;
+                } else {
+                    line.innerHTML = `
+                        <span class="text-neutral-400/60 dark:text-dark-600/60 select-none text-xs">[${esc(data.container)}]</span>
+                        <span class="whitespace-pre-wrap break-all text-neutral-500 dark:text-dark-500 ml-2">${esc(data.raw)}</span>`;
+                }
+
+                logStream.appendChild(line);
+                if (logCount > 500) { logStream.firstChild && logStream.removeChild(logStream.firstChild); }
+                logStream.scrollTop = logStream.scrollHeight;
+            };
+        }
+
+        connectWebSocket();
+
+        // ==================== HELPERS ====================
+        function esc(s) {
+            return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        }
+
+        function toggleStream() {
+            isPlaying = !isPlaying;
+            const icon = document.getElementById('playPauseIcon');
+            const text = document.getElementById('playPauseText');
+            const btn = document.getElementById('playPauseBtn');
+            if (isPlaying) {
+                icon.setAttribute('data-lucide', 'pause');
+                if (text) text.textContent = 'Pause';
+                if (btn) {
+                    btn.className = 'flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm font-medium hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors';
+                }
+                pausedBanner.classList.add('hidden');
+                logStream.scrollTop = logStream.scrollHeight;
+            } else {
+                icon.setAttribute('data-lucide', 'play');
+                if (text) text.textContent = 'Reprendre';
+                if (btn) {
+                    btn.className = 'flex items-center gap-2 px-3 py-1.5 rounded-lg bg-neutral-100 dark:bg-dark-800 text-neutral-700 dark:text-dark-300 text-sm font-medium hover:bg-neutral-200 dark:hover:bg-dark-700 transition-colors';
+                }
+                pausedBanner.classList.remove('hidden');
+            }
+            lucide.createIcons();
+        }
+
+        // ==================== SETTINGS ====================
         async function loadSettings() {
             const res = await fetch('/api/settings');
             const data = await res.json();
@@ -193,121 +777,390 @@
 
         document.getElementById('settingsForm').addEventListener('submit', async (e) => {
             e.preventDefault();
+            const errorsDiv = document.getElementById('settingsErrors');
+            const errorList = document.getElementById('settingsErrorList');
+            const alertDiv = document.getElementById('settingsAlert');
+            errorsDiv.classList.add('hidden');
+            alertDiv.classList.add('hidden');
+
             const formData = new FormData(e.target);
-            await fetch('/api/settings', { method: 'POST', body: formData });
-            const alert = document.getElementById('settingsAlert');
-            alert.classList.remove('hidden');
-            setTimeout(() => alert.classList.add('hidden'), 3000);
-            loadSettings(); // Recharge pour afficher ******** au mot de passe
+            const res = await fetch('/api/settings', { method: 'POST', body: formData });
+            const data = await res.json();
+
+            if (data.status === 'error') {
+                errorList.innerHTML = data.errors.map(err => `<li>${esc(err)}</li>`).join('');
+                errorsDiv.classList.remove('hidden');
+                return;
+            }
+
+            alertDiv.className = 'mb-6 p-4 rounded-xl border text-sm font-medium bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-900/20 text-green-700 dark:text-green-400';
+            alertDiv.textContent = '✓ Paramètres sauvegardés';
+            alertDiv.classList.remove('hidden');
+            setTimeout(() => alertDiv.classList.add('hidden'), 3000);
+            loadSettings();
         });
 
-        async function testEmail() {
-            const btn = event.target; btn.textContent = "Envoi en cours..."; btn.disabled = true;
-            await fetch('/api/settings/test', { method: 'POST' });
-            btn.textContent = "Envoyer un test"; btn.disabled = false;
-            alert("Email de test envoyé ! Vérifiez votre boîte de réception.");
+        async function testEmail(btn) {
+            const original = btn.textContent;
+            btn.textContent = 'Envoi...';
+            btn.disabled = true;
+            try {
+                await fetch('/api/settings/test', { method: 'POST' });
+                btn.textContent = '✓ Envoyé';
+                setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 2500);
+            } catch {
+                btn.textContent = 'Erreur';
+                btn.disabled = false;
+            }
         }
 
-        // --- WEBSOCKET & TERMINAL ---
-        function escapeHtml(unsafe) { return unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
-
-        function connectWebSocket() {
-            const ws = new WebSocket(`ws://${window.location.host}/ws/logs`);
-            ws.onmessage = function(event) {
-                if (!isPlaying) return;
-                if (welcomeBanner) welcomeBanner.remove();
-                const data = JSON.parse(event.data);
-                const line = document.createElement('div');
-                line.className = 'flex gap-3 px-2 py-0.5 hover:bg-gray-100 dark:hover:bg-gray-900 rounded transition-colors';
-                
-                if (data.is_attack) {
-                    line.className += ' bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-400 animate-pulse';
-                    line.innerHTML = `<span class="text-red-400 dark:text-red-600 select-none flex-shrink-0">[${escapeHtml(data.container)}]</span> <span class="font-bold select-none flex-shrink-0">${escapeHtml(data.attack_type)}</span> <span class="font-bold">${escapeHtml(data.ip)}</span> <span class="text-gray-500">-></span> <span class="font-mono underline">${escapeHtml(data.path)}</span>`;
-                } else if (data.is_web) {
-                    let statusClass = 'text-gray-400 dark:text-gray-500';
-                    if (data.status >= 400) statusClass = 'text-yellow-600 dark:text-yellow-400 font-bold';
-                    line.innerHTML = `<span class="text-gray-400 dark:text-gray-500 select-none flex-shrink-0">[${escapeHtml(data.container)}]</span> <span class="text-gray-500 dark:text-gray-600 select-none flex-shrink-0">${escapeHtml(data.ip)}</span> <span class="text-blue-600 dark:text-blue-400 select-none flex-shrink-0">${escapeHtml(data.method)}</span> <span>${escapeHtml(data.path)}</span> <span class="${statusClass} select-none flex-shrink-0">${escapeHtml(data.status)}</span>`;
-                } else {
-                    line.innerHTML = `<span class="text-gray-400 dark:text-gray-500 select-none flex-shrink-0">[${escapeHtml(data.container)}]</span> <span class="whitespace-pre-wrap break-all text-gray-500 dark:text-gray-600">${escapeHtml(data.raw)}</span>`;
-                }
-                logStream.appendChild(line); logCount++;
-                if (logCount > 500) { logStream.removeChild(logStream.firstChild); logCount--; }
-                logStream.scrollTop = logStream.scrollHeight;
-            };
-            ws.onclose = () => setTimeout(connectWebSocket, 2000);
-            ws.onerror = () => ws.close();
-        }
-        connectWebSocket();
-
-        function toggleStream() {
-            isPlaying = !isPlaying;
-            const icon = document.getElementById('playPauseIcon'); const text = document.getElementById('playPauseText');
-            if (isPlaying) { icon.setAttribute('data-lucide', 'pause'); text.textContent = 'Pause'; text.className = 'text-sm font-medium text-red-500'; icon.className = 'w-4 h-4 text-red-500'; pausedBanner.classList.add('hidden'); logStream.scrollTop = logStream.scrollHeight; }
-            else { icon.setAttribute('data-lucide', 'play'); text.textContent = 'Reprendre'; text.className = 'text-sm font-medium text-black dark:text-white'; icon.className = 'w-4 h-4 text-black dark:text-white'; pausedBanner.classList.remove('hidden'); }
-            lucide.createIcons();
-        }
-
-                // --- GESTION DES RAPPORTS ---
+        // ==================== REPORTS ====================
         async function loadReports() {
-            const res = await fetch('/api/reports');
-            const reports = await res.json();
             const list = document.getElementById('reportsList');
             const noMsg = document.getElementById('noReportsMsg');
-            
-            list.innerHTML = ''; // On vide la liste
+            list.innerHTML = '<p class="text-neutral-400 text-sm text-center py-8">Chargement...</p>';
+
+            const res = await fetch('/api/reports');
+            const reports = await res.json();
+            list.innerHTML = '';
 
             if (reports.length === 0) {
                 noMsg.classList.remove('hidden');
                 return;
             }
-            
             noMsg.classList.add('hidden');
 
             reports.forEach(report => {
-                // On extrait la date du nom de fichier (ex: "rapport_2026-06-26.html")
                 const dateStr = report.filename.replace('rapport_', '').replace('.html', '');
-                
                 const card = document.createElement('div');
-                card.className = 'flex items-center justify-between p-5 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl hover:shadow-md transition-shadow';
+                card.className = 'flex items-center justify-between p-4 bg-white dark:bg-dark-800 border border-neutral-200 dark:border-dark-700 rounded-xl hover:shadow-md transition-all card-hover';
                 card.id = `report-${report.filename}`;
-                
                 card.innerHTML = `
                     <div class="flex items-center gap-4">
-                        <div class="bg-white dark:bg-gray-900 p-3 rounded-lg border border-gray-200 dark:border-gray-600">
-                            <i data-lucide="file-check" class="w-6 h-6 text-black dark:text-white"></i>
+                        <div class="w-10 h-10 rounded-lg bg-neutral-100 dark:bg-dark-700 flex items-center justify-center flex-shrink-0">
+                            <i data-lucide="file-check" class="w-5 h-5 text-neutral-600 dark:text-dark-300"></i>
                         </div>
                         <div>
-                            <h4 class="font-semibold text-black dark:text-white">Rapport du ${dateStr}</h4>
-                            <p class="text-sm text-gray-500">Analyse des événements critiques de la journée</p>
+                            <h4 class="font-semibold text-sm text-neutral-900 dark:text-white">Rapport du ${esc(dateStr)}</h4>
+                            <p class="text-xs text-neutral-400 dark:text-dark-500">Analyse des événements critiques</p>
                         </div>
                     </div>
-                    <div class="flex items-center gap-2">
-                        <a href="/api/reports/view/${report.filename}" target="_blank" class="px-3 py-2 text-sm font-medium text-black dark:text-white hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors flex items-center gap-1">
-                            <i data-lucide="eye" class="w-4 h-4"></i> Voir
+                    <div class="flex items-center gap-1">
+                        <a href="/api/reports/view/${esc(report.filename)}" target="_blank" rel="noopener noreferrer"
+                           class="p-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-dark-700 text-neutral-600 dark:text-dark-300 transition-colors">
+                            <i data-lucide="eye" class="w-4 h-4"></i>
                         </a>
-                        <a href="/api/reports/view/${report.filename}" download="${report.filename}" class="px-3 py-2 text-sm font-medium text-black dark:text-white hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors flex items-center gap-1">
-                            <i data-lucide="download" class="w-4 h-4"></i> Télécharger
+                        <a href="/api/reports/view/${esc(report.filename)}" download="${esc(report.filename)}"
+                           class="p-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-dark-700 text-neutral-600 dark:text-dark-300 transition-colors">
+                            <i data-lucide="download" class="w-4 h-4"></i>
                         </a>
-                        <button onclick="deleteReport('${report.filename}')" class="px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors flex items-center gap-1">
+                        <button onclick="deleteReport('${esc(report.filename)}')"
+                                class="p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition-colors">
                             <i data-lucide="trash-2" class="w-4 h-4"></i>
                         </button>
-                    </div>
-                `;
+                    </div>`;
                 list.appendChild(card);
             });
-            
             lucide.createIcons();
         }
 
+        async function generateReport() {
+            const btn = document.getElementById('generateBtn');
+            const feedback = document.getElementById('reportGenFeedback');
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> Génération...';
+                lucide.createIcons();
+            }
+
+            try {
+                const res = await fetch('/api/reports/generate');
+                const data = await res.json();
+                feedback.classList.remove('hidden');
+                if (data.status === 'success') {
+                    feedback.className = 'mb-4 p-4 rounded-xl border text-sm font-medium bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-900/20 text-green-700 dark:text-green-400';
+                    feedback.textContent = `✓ Rapport "${data.filename}" généré`;
+                    loadReports();
+                } else {
+                    feedback.className = 'mb-4 p-4 rounded-xl border text-sm font-medium bg-yellow-50 dark:bg-yellow-900/10 border-yellow-200 dark:border-yellow-900/20 text-yellow-700 dark:text-yellow-400';
+                    feedback.textContent = 'Aucune attaque détectée aujourd\'hui';
+                }
+            } catch {
+                feedback.className = 'mb-4 p-4 rounded-xl border text-sm font-medium bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-900/20 text-red-700 dark:text-red-400';
+                feedback.textContent = 'Erreur lors de la génération';
+                feedback.classList.remove('hidden');
+            }
+
+            setTimeout(() => feedback.classList.add('hidden'), 5000);
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i data-lucide="plus" class="w-4 h-4"></i> Générer';
+                lucide.createIcons();
+            }
+        }
+
         async function deleteReport(filename) {
-            if(!confirm("Voulez-vous vraiment supprimer ce rapport ?")) return;
-            await fetch(`/api/reports/${filename}`, { method: 'DELETE' });
-            document.getElementById(`report-${filename}`).remove();
-            // Si la liste est vide, on remontre le message
-            if(document.getElementById('reportsList').children.length === 0) {
+            if (!confirm('Supprimer ce rapport ?')) return;
+            await fetch(`/api/reports/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+            const card = document.getElementById(`report-${filename}`);
+            if (card) card.remove();
+            if (document.getElementById('reportsList').children.length === 0) {
                 document.getElementById('noReportsMsg').classList.remove('hidden');
             }
         }
+
+        // ==================== DASHBOARD ====================
+        function _isDark() {
+            return document.documentElement.classList.contains('dark');
+        }
+
+        function _chartDefaults() {
+            const dark = _isDark();
+            return {
+                textColor: dark ? '#a3a3a3' : '#525252',
+                gridColor: dark ? '#262626' : '#f5f5f5',
+                bgCard: dark ? '#171717' : '#ffffff',
+            };
+        }
+
+        function _destroyChart(id) {
+            if (_charts[id]) { _charts[id].destroy(); delete _charts[id]; }
+        }
+
+        const _typeShort = {
+            "Tentative d'Injection SQL": "Injection SQL",
+            "Tentative de Cross-Site Scripting (XSS)": "XSS",
+            "Tentative de Path Traversal": "Path Traversal",
+            "Scan de vulnérabilités (Bot)": "Scan Bot",
+            "Recherche de fichiers sensibles": "Fichiers sensibles",
+            "Alerte interne de l'application": "Alerte interne",
+            "Tentative de falsification (CSRF)": "CSRF",
+        };
+        function _short(t) { return _typeShort[t] || t; }
+
+        async function loadDashboard() {
+            try {
+                const res = await fetch('/api/dashboard');
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                _renderDashboard(data);
+            } catch(e) {
+                console.error('Dashboard error:', e);
+            }
+        }
+
+        function _renderDashboard(data) {
+            const { kpis, by_hour, by_day, by_type, top_ips, recent } = data;
+            const C = _chartDefaults();
+
+            document.getElementById('kpiAttacks').textContent = kpis.attacks_today ?? '0';
+            document.getElementById('kpiIPs').textContent = kpis.unique_ips_today ?? '0';
+            document.getElementById('kpiTopType').textContent = _short(kpis.top_type_today || '—');
+            document.getElementById('kpiContainer').textContent = kpis.top_container || '—';
+
+            // Trend chart
+            _destroyChart('trend');
+            _charts['trend'] = new Chart(document.getElementById('chartTrend'), {
+                type: 'line',
+                data: {
+                    labels: by_day.map(d => {
+                        const [,m,day] = d.day.split('-');
+                        return `${day}/${m}`;
+                    }),
+                    datasets: [{
+                        label: 'Attaques',
+                        data: by_day.map(d => d.count),
+                        borderColor: _isDark() ? '#e5e5e5' : '#171717',
+                        backgroundColor: _isDark() ? 'rgba(229,229,229,0.05)' : 'rgba(23,23,23,0.04)',
+                        borderWidth: 2,
+                        pointBackgroundColor: _isDark() ? '#e5e5e5' : '#171717',
+                        pointRadius: 3,
+                        pointHoverRadius: 5,
+                        tension: 0.4,
+                        fill: true,
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { 
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: _isDark() ? '#171717' : '#fff',
+                            titleColor: _isDark() ? '#e5e5e5' : '#171717',
+                            bodyColor: _isDark() ? '#a3a3a3' : '#525252',
+                            borderColor: _isDark() ? '#262626' : '#e5e5e5',
+                            borderWidth: 1,
+                            padding: 10,
+                            cornerRadius: 8,
+                        }
+                    },
+                    scales: {
+                        x: { ticks: { color: C.textColor, font: { size: 11 } }, grid: { color: C.gridColor } },
+                        y: { ticks: { color: C.textColor, font: { size: 11 }, stepSize: 1 }, grid: { color: C.gridColor }, beginAtZero: true },
+                    }
+                }
+            });
+
+            // Hour chart
+            _destroyChart('hour');
+            _charts['hour'] = new Chart(document.getElementById('chartHour'), {
+                type: 'bar',
+                data: {
+                    labels: by_hour.map(h => `${String(h.hour).padStart(2,'0')}h`),
+                    datasets: [{
+                        data: by_hour.map(h => h.count),
+                        backgroundColor: by_hour.map(h =>
+                            h.count > 0
+                                ? (_isDark() ? 'rgba(239,68,68,0.6)' : 'rgba(239,68,68,0.8)')
+                                : (_isDark() ? 'rgba(64,64,64,0.3)' : 'rgba(229,229,229,0.5)')
+                        ),
+                        borderRadius: 4,
+                        borderSkipped: false,
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { 
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: _isDark() ? '#171717' : '#fff',
+                            titleColor: _isDark() ? '#e5e5e5' : '#171717',
+                            bodyColor: _isDark() ? '#a3a3a3' : '#525252',
+                            borderColor: _isDark() ? '#262626' : '#e5e5e5',
+                            borderWidth: 1,
+                            padding: 10,
+                            cornerRadius: 8,
+                        }
+                    },
+                    scales: {
+                        x: { ticks: { color: C.textColor, font: { size: 9 }, maxRotation: 0 }, grid: { display: false } },
+                        y: { ticks: { color: C.textColor, font: { size: 10 }, stepSize: 1 }, grid: { color: C.gridColor }, beginAtZero: true },
+                    }
+                }
+            });
+
+            // Types chart
+            _destroyChart('types');
+            const typeColors = ['#171717','#404040','#737373','#a3a3a3','#d4d4d4','#e5e5e5'];
+            const darkTypeColors = ['rgba(255,255,255,0.9)','rgba(255,255,255,0.75)','rgba(255,255,255,0.6)','rgba(255,255,255,0.45)','rgba(255,255,255,0.3)','rgba(255,255,255,0.15)'];
+            _charts['types'] = new Chart(document.getElementById('chartTypes'), {
+                type: 'bar',
+                data: {
+                    labels: by_type.map(t => _short(t.type)),
+                    datasets: [{
+                        data: by_type.map(t => t.count),
+                        backgroundColor: by_type.map((_, i) => _isDark() ? darkTypeColors[i % darkTypeColors.length] : typeColors[i % typeColors.length]),
+                        borderRadius: 4,
+                        borderSkipped: false,
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { 
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: _isDark() ? '#171717' : '#fff',
+                            titleColor: _isDark() ? '#e5e5e5' : '#171717',
+                            bodyColor: _isDark() ? '#a3a3a3' : '#525252',
+                            borderColor: _isDark() ? '#262626' : '#e5e5e5',
+                            borderWidth: 1,
+                            padding: 10,
+                            cornerRadius: 8,
+                        }
+                    },
+                    scales: {
+                        x: { ticks: { color: C.textColor, font: { size: 11 }, stepSize: 1 }, grid: { color: C.gridColor }, beginAtZero: true },
+                        y: { ticks: { color: C.textColor, font: { size: 11 } }, grid: { display: false } },
+                    }
+                }
+            });
+
+            // Top IPs
+            const maxCount = top_ips.length ? top_ips[0].count : 1;
+            document.getElementById('topIpsChart').innerHTML = top_ips.map((item, i) => `
+                <div>
+                    <div class="flex items-center justify-between mb-1.5">
+                        <span class="font-mono text-sm text-neutral-900 dark:text-white font-medium">${esc(item.ip)}</span>
+                        <span class="text-xs font-semibold text-neutral-400 dark:text-dark-500">${item.count} attaque${item.count > 1 ? 's' : ''}</span>
+                    </div>
+                    <div class="w-full bg-neutral-100 dark:bg-dark-700 rounded-full h-1.5">
+                        <div class="h-1.5 rounded-full transition-all duration-700 ease-out"
+                             style="width:${Math.round(item.count / maxCount * 100)}%;
+                                    background:${_isDark() ? `rgba(255,255,255,${0.9 - i*0.15})` : ['#171717','#404040','#737373','#a3a3a3','#d4d4d4'][i]}">
+                        </div>
+                    </div>
+                </div>
+            `).join('') || '<p class="text-neutral-400 text-sm text-center py-4">Aucune donnée</p>';
+
+            // Recent feed
+            const BADGE = {
+                "Tentative d'Injection SQL": 'bg-red-100 dark:bg-red-900/20 text-red-700 dark:text-red-400',
+                "Tentative de Cross-Site Scripting (XSS)": 'bg-orange-100 dark:bg-orange-900/20 text-orange-700 dark:text-orange-400',
+                "Tentative de Path Traversal": 'bg-yellow-100 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400',
+                "Scan de vulnérabilités (Bot)": 'bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400',
+                "Recherche de fichiers sensibles": 'bg-purple-100 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400',
+            };
+            document.getElementById('recentFeed').innerHTML = recent.map(ev => `
+                <div class="flex items-center gap-4 px-4 py-3 rounded-lg bg-neutral-50 dark:bg-dark-800/50 hover:bg-neutral-100 dark:hover:bg-dark-700/50 transition-colors border border-transparent hover:border-neutral-200 dark:hover:border-dark-600">
+                    <span class="text-xs text-neutral-400 dark:text-dark-500 flex-shrink-0 w-28 font-mono">${esc(ev.timestamp)}</span>
+                    <span class="font-mono text-xs font-medium text-neutral-900 dark:text-white flex-shrink-0 w-28">${esc(ev.ip)}</span>
+                    <span class="text-[10px] px-2 py-0.5 rounded-full font-semibold flex-shrink-0 ${BADGE[ev.attack_type] || 'bg-neutral-100 dark:bg-dark-700 text-neutral-700 dark:text-dark-300'}">
+                        ${esc(_short(ev.attack_type))}
+                    </span>
+                    <span class="text-xs text-neutral-400 dark:text-dark-500 flex-shrink-0 font-mono">[${esc(ev.container)}]</span>
+                    <span class="text-xs text-neutral-400 dark:text-dark-500 truncate font-mono">${esc(ev.path)}</span>
+                </div>
+            `).join('') || '<p class="text-neutral-400 text-sm text-center py-4">Aucune attaque enregistrée</p>';
+
+            lucide.createIcons();
+        }
+
+        function _startDashTimer() {
+            _stopDashTimer();
+            _dashTimer = setInterval(loadDashboard, 30000);
+        }
+        function _stopDashTimer() {
+            if (_dashTimer) { clearInterval(_dashTimer); _dashTimer = null; }
+        }
+
+        // ==================== MOBILE DRAWER ====================
+        function openMobileDrawer() {
+            const drawer = document.getElementById('mobileDrawer');
+            const panel = document.getElementById('mobileDrawerPanel');
+            drawer.classList.remove('hidden');
+            void drawer.offsetWidth;
+            drawer.classList.remove('opacity-0');
+            panel.classList.remove('-translate-x-full');
+            document.body.style.overflow = 'hidden';
+            updateDrawerThemeLabel();
+            lucide.createIcons();
+        }
+
+        function closeMobileDrawer() {
+            const drawer = document.getElementById('mobileDrawer');
+            const panel = document.getElementById('mobileDrawerPanel');
+            drawer.classList.add('opacity-0');
+            panel.classList.add('-translate-x-full');
+            setTimeout(() => {
+                drawer.classList.add('hidden');
+                document.body.style.overflow = '';
+            }, 300);
+        }
+
+        function updateDrawerThemeLabel() {
+            const isDark = document.documentElement.classList.contains('dark');
+            const icon = document.getElementById('drawer-theme-icon');
+            const label = document.getElementById('drawer-theme-label');
+            if (icon) icon.setAttribute('data-lucide', isDark ? 'sun' : 'moon');
+            if (label) label.textContent = isDark ? 'Mode clair' : 'Mode sombre';
+            lucide.createIcons();
+        }
+
+        // Override la fonction de stats existante
+        const originalWsOnmessage = null;
+        // On va patcher via MutationObserver ou simplement mettre à jour dans le onmessage
+
         lucide.createIcons();
     </script>
 </body>

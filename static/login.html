@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="fr" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LogSonar — Connexion</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script>tailwind.config = { darkMode: 'class' }</script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', system-ui, sans-serif; }
+        .fade-in { animation: fadeIn 0.4s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+        .shake { animation: shake 0.5s ease-in-out; }
+        @keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-8px); } 75% { transform: translateX(8px); } }
+    </style>
+    <script>
+        if (localStorage.getItem('logsonar-theme') === 'dark' || 
+            (!localStorage.getItem('logsonar-theme') && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+            document.documentElement.classList.add('dark');
+        }
+    </script>
+</head>
+<body class="h-full bg-neutral-50 dark:bg-dark-950 text-neutral-900 dark:text-dark-100 flex items-center justify-center p-4 transition-colors duration-300">
+
+    <div class="w-full max-w-sm fade-in">
+        <!-- Logo -->
+        <div class="flex items-center justify-center gap-3 mb-10">
+            <div class="w-10 h-10 rounded-xl bg-black dark:bg-white flex items-center justify-center">
+                <i data-lucide="radar" class="w-6 h-6 text-white dark:text-black"></i>
+            </div>
+            <span class="text-2xl font-bold tracking-tight">LogSonar</span>
+        </div>
+
+        <!-- Setup Mode (si aucun user) -->
+        <div id="setupPanel" class="hidden bg-white dark:bg-dark-800 rounded-2xl border border-neutral-200 dark:border-dark-700 p-6 shadow-sm">
+            <h2 class="text-lg font-semibold mb-1">Configuration initiale</h2>
+            <p class="text-sm text-neutral-400 dark:text-dark-500 mb-6">Créez votre compte superuser</p>
+            
+            <form id="setupForm" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-neutral-700 dark:text-dark-300 mb-1.5">Nom d'utilisateur</label>
+                    <input type="text" name="username" required class="w-full bg-neutral-50 dark:bg-dark-900 border border-neutral-200 dark:border-dark-600 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white focus:border-transparent transition-all" placeholder="admin">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-neutral-700 dark:text-dark-300 mb-1.5">Email</label>
+                    <input type="email" name="email" required class="w-full bg-neutral-50 dark:bg-dark-900 border border-neutral-200 dark:border-dark-600 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white focus:border-transparent transition-all" placeholder="admin@domaine.com">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-neutral-700 dark:text-dark-300 mb-1.5">Mot de passe</label>
+                    <input type="password" name="password" required minlength="8" class="w-full bg-neutral-50 dark:bg-dark-900 border border-neutral-200 dark:border-dark-600 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white focus:border-transparent transition-all" placeholder="Min. 8 caractères">
+                </div>
+                <button type="submit" class="w-full bg-black dark:bg-white hover:bg-neutral-800 dark:hover:bg-neutral-200 text-white dark:text-black font-medium py-2.5 rounded-xl transition-colors">
+                    Créer le compte
+                </button>
+            </form>
+        </div>
+
+        <!-- Login Step 1 -->
+        <div id="loginPanel" class="bg-white dark:bg-dark-800 rounded-2xl border border-neutral-200 dark:border-dark-700 p-6 shadow-sm">
+            <h2 class="text-lg font-semibold mb-1">Connexion</h2>
+            <p class="text-sm text-neutral-400 dark:text-dark-500 mb-6">Entrez vos identifiants</p>
+            
+            <form id="loginForm" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-neutral-700 dark:text-dark-300 mb-1.5">Nom d'utilisateur</label>
+                    <input type="text" name="username" required class="w-full bg-neutral-50 dark:bg-dark-900 border border-neutral-200 dark:border-dark-600 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white focus:border-transparent transition-all" placeholder="admin">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-neutral-700 dark:text-dark-300 mb-1.5">Mot de passe</label>
+                    <input type="password" name="password" required class="w-full bg-neutral-50 dark:bg-dark-900 border border-neutral-200 dark:border-dark-600 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white focus:border-transparent transition-all" placeholder="••••••••">
+                </div>
+                <button type="submit" class="w-full bg-black dark:bg-white hover:bg-neutral-800 dark:hover:bg-neutral-200 text-white dark:text-black font-medium py-2.5 rounded-xl transition-colors">
+                    Se connecter
+                </button>
+            </form>
+            <p id="loginError" class="hidden mt-3 text-sm text-red-500 text-center"></p>
+        </div>
+
+        <!-- OTP Step 2 -->
+        <div id="otpPanel" class="hidden bg-white dark:bg-dark-800 rounded-2xl border border-neutral-200 dark:border-dark-700 p-6 shadow-sm">
+            <h2 class="text-lg font-semibold mb-1">Vérification</h2>
+            <p class="text-sm text-neutral-400 dark:text-dark-500 mb-2" id="otpMessage">Code envoyé à votre email</p>
+            
+            <!-- Alerte si SMTP non configuré -->
+            <div id="otpConsoleAlert" class="hidden mb-4 p-3 bg-yellow-50 dark:bg-yellow-900/10 border border-yellow-200 dark:border-yellow-900/20 rounded-lg">
+                <p class="text-xs text-yellow-700 dark:text-yellow-400">
+                    <strong>SMTP non configuré</strong><br>
+                    Le code OTP est affiché dans les logs Docker.<br>
+                    Configurez l'email dans Paramètres pour l'activer.
+                </p>
+                <p class="text-xs font-mono mt-2 text-yellow-800 dark:text-yellow-300" id="otpCodeDisplay"></p>
+            </div>
+            
+            <form id="otpForm" class="space-y-4">
+                <input type="hidden" name="username" id="otpUsername">
+                <div>
+                    <label class="block text-sm font-medium text-neutral-700 dark:text-dark-300 mb-1.5">Code à 6 chiffres</label>
+                    <input type="text" name="code" required maxlength="6" inputmode="numeric" pattern="[0-9]{6}" class="w-full bg-neutral-50 dark:bg-dark-900 border border-neutral-200 dark:border-dark-600 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white focus:border-transparent transition-all text-center text-2xl font-mono tracking-[0.5em]" placeholder="000000">
+                </div>
+                <button type="submit" class="w-full bg-black dark:bg-white hover:bg-neutral-800 dark:hover:bg-neutral-200 text-white dark:text-black font-medium py-2.5 rounded-xl transition-colors">
+                    Vérifier
+                </button>
+            </form>
+            <p id="otpError" class="hidden mt-3 text-sm text-red-500 text-center"></p>
+            <button onclick="backToLogin()" class="w-full mt-3 text-sm text-neutral-400 hover:text-neutral-600 dark:hover:text-dark-300 transition-colors">
+                ← Retour
+            </button>
+        </div>
+
+        <!-- Footer -->
+        <p class="text-center text-xs text-neutral-400 dark:text-dark-500 mt-6">
+            LogSonar v1.0 — Sécurité Docker
+        </p>
+    </div>
+
+    <script>
+        // Check if setup needed
+        async function checkSetup() {
+            try {
+                const res = await fetch('/api/auth/check-setup');
+                const data = await res.json();
+                if (data.needs_setup) {
+                    document.getElementById('setupPanel').classList.remove('hidden');
+                    document.getElementById('loginPanel').classList.add('hidden');
+                }
+            } catch (e) {
+                console.error('Setup check failed', e);
+            }
+        }
+        checkSetup();
+
+        // Setup form
+        document.getElementById('setupForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const res = await fetch('/api/auth/setup', { method: 'POST', body: formData });
+            const data = await res.json();
+            if (data.status === 'success') {
+                alert('Compte créé ! Connectez-vous.');
+                location.reload();
+            } else {
+                alert(data.message);
+            }
+        });
+
+        // Login form
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const res = await fetch('/api/auth/login', { method: 'POST', body: formData });
+            const data = await res.json();
+            
+            const errorEl = document.getElementById('loginError');
+            if (data.status === 'otp_required') {
+                document.getElementById('loginPanel').classList.add('hidden');
+                document.getElementById('otpPanel').classList.remove('hidden');
+                document.getElementById('otpUsername').value = data.username;
+                
+                // Si pas d'email envoyé
+                if (!data.email_sent) {
+                    document.getElementById('otpMessage').textContent = 'Code de confirmation (voir logs)';
+                    document.getElementById('otpConsoleAlert').classList.remove('hidden');
+                    if (data.code) {
+                        document.getElementById('otpCodeDisplay').textContent = `Code: ${data.code}`;
+                    }
+                } else {
+                    document.getElementById('otpMessage').textContent = 'Code envoyé à votre email';
+                    document.getElementById('otpConsoleAlert').classList.add('hidden');
+                }
+                
+                errorEl.classList.add('hidden');
+            } else {
+                errorEl.textContent = data.message || 'Erreur de connexion';
+                errorEl.classList.remove('hidden');
+                document.getElementById('loginPanel').classList.add('shake');
+                setTimeout(() => document.getElementById('loginPanel').classList.remove('shake'), 500);
+            }
+        });
+
+        // OTP form
+        document.getElementById('otpForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const res = await fetch('/api/auth/verify-otp', { method: 'POST', body: formData });
+            const data = await res.json();
+            
+            const errorEl = document.getElementById('otpError');
+            if (data.status === 'success') {
+                window.location.href = '/';
+            } else {
+                errorEl.textContent = data.message || 'Code invalide';
+                errorEl.classList.remove('hidden');
+                document.getElementById('otpPanel').classList.add('shake');
+                setTimeout(() => document.getElementById('otpPanel').classList.remove('shake'), 500);
+            }
+        });
+
+        function backToLogin() {
+            document.getElementById('otpPanel').classList.add('hidden');
+            document.getElementById('loginPanel').classList.remove('hidden');
+            document.getElementById('loginError').classList.add('hidden');
+        }
+
+        lucide.createIcons();
+    </script>
+</body>
+</html>

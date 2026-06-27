@@ -5,6 +5,8 @@
 # Il est créé automatiquement par Docker au premier lancement.
 data/
 
+data/.secret_key
+
 # ==========================================
 # Python
 # ==========================================
