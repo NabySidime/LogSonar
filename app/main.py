@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from collections import defaultdict
 from urllib.parse import unquote_plus, unquote
+from typing import Optional, Dict, List, Tuple
 
 import docker
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Query, Depends, HTTPException, status
@@ -52,6 +53,7 @@ from db import (
     get_user_by_username, get_user_by_id, create_user, count_users,
     has_superuser, delete_user, store_otp, verify_otp,
     _OTP_STORE, get_db,
+    purge_old_events,
 )
 from mailer import send_critical_alert, send_otp_email
 from reporter import generate_daily_report
@@ -226,6 +228,11 @@ ATTACK_SIGNATURES: dict[str, str] = {
         r"|appscan|webinspect|qualysguard|vega|zaproxy|zap"
         r"|masscan|zgrab|shodan|censys"
         r"|^$"
+        r"|/(?:storage|apply|hndUnblock|tmUnblock|JNAP|HNAP1|cgi-bin|goform|boaform)/"
+        r"|\.cgi$"
+        r"|/device\.rsp"
+        r"|/cgi-bin/luci/"
+        r"|/cgi-bin/webproc"
         r")"
     ),
     "Recherche de fichiers sensibles": (
@@ -284,10 +291,11 @@ ATTACK_SIGNATURES: dict[str, str] = {
     ),
 }
 
-_BRUTE_THRESHOLD = 20
-_BRUTE_WINDOW    = 60
-_FLOOD_THRESHOLD = 30
-_FLOOD_WINDOW    = 30
+_BRUTE_THRESHOLD = 200
+_BRUTE_WINDOW    = 120
+_FLOOD_THRESHOLD = 250
+_FLOOD_WINDOW    = 60
+_ALERT_COOLDOWN_SECONDS = 600
 _ip_windows: dict = defaultdict(list)
 
 _ANSI_RE      = re.compile(r'\x1B(?:[@-Z\-_]|\[[0-?]*[ -/]*[@-~])')
@@ -632,8 +640,6 @@ async def docker_supervisor(queue: asyncio.Queue) -> None:
 # RATE-LIMITING ALERTES EMAIL
 # ---------------------------------------------------------------------------
 _alert_cooldowns: dict[str, float] = {}
-_ALERT_COOLDOWN_SECONDS = 60
-
 
 def _is_successful_attack(status: str) -> bool:
     try:
@@ -991,6 +997,64 @@ async def api_get_dashboard(user: dict = Depends(get_current_user)):
 # ROUTES API — ANALYSE DÉPENDANCES CONTENEURS
 # ###########################################################################
 
+#----------------------------------------------------------------------
+# SERVICES CRITIQUES À SURVEILLER (paquets système)
+#----------------------------------------------------------------------
+
+CRITICAL_SERVICES = {
+    "nginx": {
+        "name": "Nginx",
+        "category": "Reverse Proxy / Serveur Web",
+        "url": "https://nginx.org/en/download.html",
+        "docker_image": "nginx",
+    },
+    "apache2": {
+        "name": "Apache HTTP Server",
+        "category": "Serveur Web",
+        "url": "https://httpd.apache.org/download.cgi",
+        "docker_image": "httpd",
+    },
+    "openssl": {
+        "name": "OpenSSL",
+        "category": "Cryptographie / TLS",
+        "url": "https://www.openssl.org/source/",
+        "docker_image": None,
+    },
+    "postgresql": {
+        "name": "PostgreSQL",
+        "category": "Base de données",
+        "url": "https://www.postgresql.org/download/",
+        "docker_image": "postgres",
+    },
+    "mysql": {
+        "name": "MySQL",
+        "category": "Base de données",
+        "url": "https://dev.mysql.com/downloads/",
+        "docker_image": "mysql",
+    },
+    "redis": {
+        "name": "Redis",
+        "category": "Cache / Base de données",
+        "url": "https://redis.io/download/",
+        "docker_image": "redis",
+    },
+    "node": {
+        "name": "Node.js",
+        "category": "Runtime JavaScript",
+        "url": "https://nodejs.org/en/download/",
+        "docker_image": "node",
+    },
+    "python": {
+        "name": "Python",
+        "category": "Runtime Python",
+        "url": "https://www.python.org/downloads/",
+        "docker_image": "python",
+    },
+}
+
+_LAST_VERSION_CACHE = {}
+_CACHE_TTL = 3600  # 1 heure
+
 async def _get_container_pip_packages(container_name: str) -> list[dict]:
     def _run():
         try:
@@ -1005,6 +1069,143 @@ async def _get_container_pip_packages(container_name: str) -> list[dict]:
         return []
     return await asyncio.to_thread(_run)
 
+async def _get_container_system_packages(container_name: str) -> List[Dict]:
+    """
+    Scanne les paquets système (Nginx, OpenSSL, etc.) dans un conteneur.
+    Retourne une liste de dictionnaires {name, version, category, is_critical}.
+    """
+    def _run():
+        try:
+            client = _connect_docker()
+            container = client.containers.get(container_name)
+            
+            packages = []
+            
+            # --- Détection du gestionnaire de paquets ---
+            # 1. Alpine (apk)
+            result = container.exec_run("which apk", stdout=True, stderr=True)
+            if result.exit_code == 0:
+                # Récupérer la liste complète des paquets installés
+                pkgs_output = container.exec_run("apk list -I", stdout=True).output.decode("utf-8", errors="replace")
+                for line in pkgs_output.splitlines():
+                    if not line.strip():
+                        continue
+                    # Format: "nginx-1.27.0-r0 x86_64 {nginx} (GPL-2.0) [installed]"
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        pkg_name_ver = parts[0]
+                        # Extraire le nom et la version
+                        if '-' in pkg_name_ver:
+                            # Séparer le nom du package de sa version
+                            # ex: "nginx-1.27.0-r0" → name="nginx", version="1.27.0-r0"
+                            name_parts = pkg_name_ver.split('-')
+                            # Le nom est tout sauf le dernier élément (qui est la version)
+                            # Mais parfois le nom contient des tirets (ex: "postgresql-client")
+                            # On prend tout jusqu'au dernier tiret
+                            name = '-'.join(name_parts[:-1]) if len(name_parts) > 1 else pkg_name_ver
+                            version = name_parts[-1] if len(name_parts) > 1 else ""
+                            # Vérifier si c'est un service critique
+                            is_critical = name in CRITICAL_SERVICES
+                            packages.append({
+                                "name": name,
+                                "version": version,
+                                "is_critical": is_critical,
+                                "category": CRITICAL_SERVICES.get(name, {}).get("category", "Paquet système"),
+                                "display_name": CRITICAL_SERVICES.get(name, {}).get("name", name),
+                            })
+                return packages
+            
+            # 2. Debian/Ubuntu (apt)
+            result = container.exec_run("which apt", stdout=True, stderr=True)
+            if result.exit_code == 0:
+                pkgs_output = container.exec_run("apt list --installed", stdout=True).output.decode("utf-8", errors="replace")
+                for line in pkgs_output.splitlines():
+                    if not line.strip() or line.startswith("Listing..."):
+                        continue
+                    # Format: "nginx/stable,now 1.24.0-1 amd64 [installed]"
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        pkg_name = parts[0].split('/')[0]
+                        version = parts[1].split(',')[0]
+                        is_critical = pkg_name in CRITICAL_SERVICES
+                        packages.append({
+                            "name": pkg_name,
+                            "version": version,
+                            "is_critical": is_critical,
+                            "category": CRITICAL_SERVICES.get(pkg_name, {}).get("category", "Paquet système"),
+                            "display_name": CRITICAL_SERVICES.get(pkg_name, {}).get("name", pkg_name),
+                        })
+                return packages
+            
+            # 3. RHEL/CentOS/Fedora (yum/dnf) — si besoin
+            result = container.exec_run("which yum", stdout=True, stderr=True)
+            if result.exit_code == 0:
+                pkgs_output = container.exec_run("yum list installed", stdout=True).output.decode("utf-8", errors="replace")
+                for line in pkgs_output.splitlines():
+                    if not line.strip() or line.startswith("Installed Packages"):
+                        continue
+                    # Format: "nginx.x86_64        1:1.20.1-1.el7       @epel"
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        pkg_name_ver = parts[0]
+                        version = parts[1]
+                        pkg_name = pkg_name_ver.split('.')[0] if '.' in pkg_name_ver else pkg_name_ver
+                        is_critical = pkg_name in CRITICAL_SERVICES
+                        packages.append({
+                            "name": pkg_name,
+                            "version": version,
+                            "is_critical": is_critical,
+                            "category": CRITICAL_SERVICES.get(pkg_name, {}).get("category", "Paquet système"),
+                            "display_name": CRITICAL_SERVICES.get(pkg_name, {}).get("name", pkg_name),
+                        })
+                return packages
+            
+            return []
+        except Exception as e:
+            print(f"LogSonar: Erreur scan système {container_name}: {e}")
+            return []
+    return await asyncio.to_thread(_run)
+
+async def _get_latest_version(service_name: str) -> Optional[str]:
+    """
+    Récupère la dernière version stable d'un service via Docker Hub.
+    Utilise un cache pour limiter les requêtes HTTP.
+    """
+    import time
+    from urllib.request import urlopen, Request
+    import json
+    
+    # Vérifier le cache
+    now = time.time()
+    if service_name in _LAST_VERSION_CACHE:
+        cached_version, cached_time = _LAST_VERSION_CACHE[service_name]
+        if now - cached_time < _CACHE_TTL:
+            return cached_version
+    
+    try:
+        # Récupérer via Docker Hub API
+        if service_name in CRITICAL_SERVICES and CRITICAL_SERVICES[service_name]["docker_image"]:
+            image = CRITICAL_SERVICES[service_name]["docker_image"]
+            url = f"https://hub.docker.com/v2/repositories/library/{image}/tags?page_size=1&page=1&ordering=last_updated"
+            req = Request(url, headers={"User-Agent": "LogSonar/1.0"})
+            with urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode())
+                if data.get("results") and len(data["results"]) > 0:
+                    latest_tag = data["results"][0]["name"]
+                    # Nettoyer le tag (enlever "latest", "stable", etc.)
+                    if latest_tag.lower() in ["latest", "stable", "main"]:
+                        # Prendre le deuxième résultat
+                        if len(data["results"]) > 1:
+                            latest_tag = data["results"][1]["name"]
+                        else:
+                            latest_tag = None
+                    if latest_tag:
+                        _LAST_VERSION_CACHE[service_name] = (latest_tag, now)
+                        return latest_tag
+    except Exception as e:
+        print(f"LogSonar: Erreur récupération version {service_name}: {e}")
+    
+    return None
 
 async def _check_pypi_latest(package_name: str) -> str | None:
     import urllib.request
@@ -1038,10 +1239,112 @@ async def api_containers_deps(user: dict = Depends(get_current_user)):
             continue
 
         PRIORITY_PACKAGES = {
-            "django", "flask", "fastapi", "requests", "urllib3", "pillow",
-            "cryptography", "pyjwt", "sqlalchemy", "celery", "redis",
-            "gunicorn", "uvicorn", "aiohttp", "boto3", "paramiko",
-            "pyyaml", "jinja2", "werkzeug", "setuptools", "pip",
+            # --- Frameworks web principaux ---
+            "django",
+            "flask",
+            "fastapi",
+            "starlette",
+            "tornado",
+            "aiohttp",
+            "sanction",
+            
+            # --- REST API ---
+            "djangorestframework",
+            "drf-yasg",
+            "drf-spectacular",
+            "flask-restx",
+            
+            # --- Auth / Sécurité ---
+            "django-allauth",
+            "python-jose",
+            "pyjwt",
+            "cryptography",
+            "bcrypt",
+            "passlib",
+            "authlib",
+            "oauthlib",
+            "pyotp",
+            "qrcode",
+            
+            # --- Bases de données & ORM ---
+            "sqlalchemy",
+            "psycopg2-binary",
+            "mysqlclient",
+            "pymongo",
+            "redis",
+            "aioredis",
+            
+            # --- Tâches asynchrones / Workers ---
+            "celery",
+            "rq",
+            "dramatiq",
+            "kombu",
+            "billiard",
+            
+            # --- Serveurs HTTP / WSGI ---
+            "gunicorn",
+            "uvicorn",
+            "waitress",
+            "hypercorn",
+            "daphne",
+            
+            # --- Clients HTTP ---
+            "requests",
+            "httpx",
+            "urllib3",
+            
+            # --- Utilitaires de traitement de fichiers ---
+            "pillow",
+            "openpyxl",
+            "xlrd",
+            "reportlab",
+            "weasyprint",
+            
+            # --- Configuration / Environnement ---
+            "python-decouple",
+            "python-dotenv",
+            "django-environ",
+            
+            # --- Middlewares / Utilitaires Django (si Django est utilisé) ---
+            "django-cors-headers",
+            "whitenoise",
+            "django-debug-toolbar",
+            "django-extensions",
+            
+            # --- AWS / Cloud ---
+            "boto3",
+            "botocore",
+            "google-cloud-storage",
+            "azure-storage-blob",
+            
+            # --- SSH / Paramiko ---
+            "paramiko",
+            "fabric",
+            
+            # --- Serialisation / Validation ---
+            "pydantic",
+            "marshmallow",
+            "attrs",
+            "cerberus",
+            
+            # --- Templates ---
+            "jinja2",
+            "mako",
+            
+            # --- Utilitaires système ---
+            "setuptools",
+            "pip",
+            "wheel",
+            
+            # --- Logging / Monitoring ---
+            "sentry-sdk",
+            "prometheus-client",
+            "structlog",
+            
+            # --- Markdown / Documentation (si exposé) ---
+            "mkdocs",
+            "mkdocs-material",
+            "pymdown-extensions",
         }
         checked, outdated = [], []
         for pkg in packages:
@@ -1064,6 +1367,8 @@ async def api_containers_deps(user: dict = Depends(get_current_user)):
             "packages": sorted(checked, key=lambda p: (p["status"] != "outdated", p["name"])),
         })
     return results
+
+
 
 # ###########################################################################
 # ROUTES API — CONTENEURS MONITORES
@@ -1099,6 +1404,72 @@ async def api_toggle_container(request: Request, user: dict = Depends(require_su
         _MUTED_CONTAINERS.add(container_name)
         return JSONResponse(content={"status": "muted"})
 
+@app.get("/api/containers/system-scan")
+async def api_containers_system_scan(user: dict = Depends(require_superuser)):
+    """
+    Analyse les paquets système critiques (Nginx, OpenSSL, etc.) des conteneurs.
+    Accessible uniquement aux superusers.
+    """
+    try:
+        client = _connect_docker()
+        containers = [c for c in client.containers.list() if not _is_logsonar_container(c.name)]
+    except Exception as e:
+        return JSONResponse(status_code=503, content={"error": f"Docker indisponible: {e}"})
+    
+    results = []
+    for container in containers:
+        packages = await _get_container_system_packages(container.name)
+        if not packages:
+            results.append({
+                "container": container.name,
+                "status": "no_system_info",
+                "packages": []
+            })
+            continue
+        
+        # Filtrer uniquement les services critiques
+        critical_pkgs = [p for p in packages if p["is_critical"]]
+        
+        if not critical_pkgs:
+            results.append({
+                "container": container.name,
+                "status": "no_critical_services",
+                "packages": packages
+            })
+            continue
+        
+        # Pour chaque package critique, vérifier la version
+        checked = []
+        for pkg in critical_pkgs:
+            latest = await _get_latest_version(pkg["name"])
+            status = "unknown"
+            if latest:
+                # Comparer les versions (simple version string, à améliorer avec packaging.version)
+                if latest.lower() == pkg["version"].lower():
+                    status = "up_to_date"
+                else:
+                    status = "outdated"
+            else:
+                status = "unknown"
+            
+            checked.append({
+                "name": pkg["name"],
+                "display_name": pkg["display_name"],
+                "current": pkg["version"],
+                "latest": latest,
+                "status": status,
+                "category": pkg["category"],
+            })
+        
+        results.append({
+            "container": container.name,
+            "status": "scanned",
+            "total": len(checked),
+            "outdated": len([p for p in checked if p["status"] == "outdated"]),
+            "packages": sorted(checked, key=lambda p: (p["status"] != "outdated", p["name"])),
+        })
+    
+    return results
 
 # ###########################################################################
 # PLANIFICATEUR DE RAPPORT
@@ -1110,6 +1481,10 @@ async def daily_report_scheduler():
         if now.hour == 0 and now.minute == 0:
             print("LogSonar: Minuit — génération du rapport quotidien...")
             await generate_daily_report()
+            
+            # Nettoyage automatique des vieux logs
+            await purge_old_events()  # ← Ajoute cette ligne
+            
             await asyncio.sleep(120)
         else:
             await asyncio.sleep(30)

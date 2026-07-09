@@ -2,23 +2,27 @@
 
 **LogSonar** est un outil de surveillance de sécurité léger, stylé et intelligent, conçu pour analyser les logs de vos conteneurs Docker en temps réel.
 
-C'est l'alternative parfaite aux monstres de la sécurité comme Wazuh ou ELK stack lorsque vous avez des ressources limitées. LogSonar se concentre sur l'essentiel : détecter les intrusions, vous alerter immédiatement, et générer des rapports explicatifs compréhensibles par tous, sans jamais envoyer vos données à une IA externe.
+C’est l’alternative parfaite aux monstres de la sécurité comme Wazuh ou ELK stack lorsque vous avez des ressources limitées. LogSonar se concentre sur l’essentiel : détecter les intrusions, vous alerter immédiatement, et générer des rapports explicatifs compréhensibles par tous, sans jamais envoyer vos données à une IA externe.
+
+---
 
 ## Fonctionnalités
 
 - **Authentification sécurisée** : Système à 2 facteurs (2FA) avec OTP par email, rôles utilisateur (superuser/user).
-- **Contrôle d'accès (RBAC)** : 2 utilisateurs max, 1 superuser. L'utilisateur standard ne peut que consulter le dashboard, le live et les rapports.
+- **Contrôle d’accès (RBAC)** : 2 utilisateurs max, 1 superuser. L’utilisateur standard ne peut que consulter le dashboard, le live et les rapports.
 - **Temps réel (WebSocket)** : Flux de logs style "terminal" ultra-rapide, avec défilement fluide et bouton Pause/Reprendre.
-- **Détection d'attaques** : Reconnaissance instantanée de **17 types de menaces** (15 signatures regex + 2 détections comportementales).
+- **Détection d’attaques** : Reconnaissance instantanée de **+20 types de menaces** (signatures regex + détections comportementales).
 - **Interface Web Moderne** : Design épuré noir et blanc, responsive, avec mode Sombre/Clair configurable.
 - **Dashboard analytique** : Graphiques temps réel (tendance 7j, volume horaire, répartition par type, top IPs attaquantes, feed récent).
-- **Alertes Email** : Notification immédiate dans votre boîte mail dès qu'une attaque critique réussie est repérée (code 2xx).
-- **Rapports Pédagogiques** : Génération quotidienne (à 00h00) de rapports HTML détaillés qui expliquent l'attaque, son risque et comment la corriger.
-- **Scan de dépendances** : Analyse des paquets Python prioritaires dans vos conteneurs, avec comparaison des versions via PyPI.
+- **Alertes Email** : Notification immédiate dans votre boîte mail dès qu’une attaque critique réussie est repérée (code 2xx). Utilise l’API **Brevo** (ex‑Sendinblue) pour un envoi fiable et sans serveur SMTP.
+- **Rapports Pédagogiques** : Génération quotidienne (à 00h00) de rapports HTML détaillés qui expliquent l’attaque, son risque et comment la corriger.
+- **Scan de dépendances Python** : Analyse des paquets prioritaires dans vos conteneurs, avec comparaison des versions via PyPI.
+- **Scan des services système** : Vérification des versions critiques (Nginx, OpenSSL, PostgreSQL, Redis…) avec alerte si elles sont obsolètes.
+- **Purge automatique** : Suppression des événements de plus de 60 jours (paramétrable) pour maîtriser la taille de la base de données.
+- **Whitelist IP / CIDR** : Possibilité d’ignorer les scanners légitimes (Censys, Shodan…) et vos propres IP internes.
 - **100% Dockerisé** : Déploiement en une seule commande.
-- **Multi-plateforme** : Fonctionne automatiquement sur Windows (Docker Desktop) pour le développement, et sur Linux (VPS/Ubuntu) pour la production.
-- **Sécurité isolée** : LogSonar s'exécute en dehors de vos projets, il ne peut pas être compromis par une faille de votre application web.
-- **Purge automatique** : Les événements de plus de 60 jours sont supprimés automatiquement.
+- **Multi‑plateforme** : Fonctionne automatiquement sur Windows (Docker Desktop) pour le développement, et sur Linux (VPS/Ubuntu) pour la production.
+- **Sécurité isolée** : LogSonar s’exécute en dehors de vos projets, il ne peut pas être compromis par une faille de votre application web.
 
 ---
 
@@ -34,18 +38,18 @@ git clone https://github.com/NabySidime/LogSonar.git
 cd LogSonar
 ```
 
-### 2. Lancer l'application
+### 2. Lancer l’application
 ```bash
 docker compose up -d --build
 ```
 
-### 3. Accéder à l'interface
-Ouvrez votre navigateur et rendez-vous sur : **http://localhost**
+### 3. Accéder à l’interface
+Ouvrez votre navigateur et rendez‑vous sur : **http://localhost**
 
 ### 4. Configuration initiale
 Lors du premier lancement, un formulaire vous permet de créer le compte superuser. Si vous skippez cette étape, un compte par défaut est créé (`admin` / `admin123`). 
 
-> **⚠️ Important** : Changez immédiatement ce mot de passe. Si le SMTP n'est pas encore configuré, le code OTP s'affichera dans les logs Docker : `docker logs -f logsonar-app`.
+> **Important** : Changez immédiatement ce mot de passe. Si Brevo n’est pas encore configuré, le code OTP s’affichera dans les logs Docker : `docker logs -f logsonar-app`.
 
 ---
 
@@ -53,8 +57,8 @@ Lors du premier lancement, un formulaire vous permet de créer le compte superus
 
 LogSonar est conçu pour se greffer sur un serveur possédant **déjà un Reverse Proxy (Nginx) et un certificat SSL (Let's Encrypt)** gérés par Docker (ex: un projet Django/Node existant).
 
-### Principe d'architecture
-Au lieu d'exposer des ports sur le serveur hôte, LogSonar rejoint le réseau Docker de votre application existante. Votre Nginx existant agit comme porte d'entrée unique.
+### Principe d’architecture
+Au lieu d’exposer des ports sur le serveur hôte, LogSonar rejoint le réseau Docker de votre application existante. Votre Nginx existant agit comme porte d’entrée unique.
 
 ```
 Internet → SSL (Nginx Existant) → Réseau Docker → LogSonar
@@ -67,14 +71,14 @@ cd LogSonar
 mkdir -p data/reports
 ```
 
-### 2. Configurer les variables d'environnement
+### 2. Configurer les variables d’environnement
 ```bash
 echo "LOGSONAR_JWT_SECRET=$(openssl rand -base64 48)" > .env
 chmod 600 .env
 ```
 
 ### 3. Adapter le réseau Docker
-Ouvrez `docker-compose.prod.yml` et modifiez le nom du réseau externe pour qu'il corresponde au réseau de votre application principale (trouvez-le avec `docker network ls`) :
+Ouvrez `docker-compose.prod.yml` et modifiez le nom du réseau externe pour qu’il corresponde au réseau de votre application principale (trouvez‑le avec `docker network ls`) :
 ```yaml
 networks:
   tikipay:
@@ -106,7 +110,7 @@ server {
     listen 443 ssl;
     server_name logsonar.votre-domaine.com; # ← REMPLACEZ
 
-    # Certificat (à générer à l'étape 6)
+    # Certificat (à générer à l’étape 6)
     ssl_certificate /etc/letsencrypt/live/logsonar.votre-domaine.com/fullchain.pem; # ← REMPLACEZ
     ssl_certificate_key /etc/letsencrypt/live/logsonar.votre-domaine.com/privkey.pem; # ← REMPLACEZ
     ssl_protocols TLSv1.2 TLSv1.3;
@@ -143,7 +147,7 @@ server {
 ### 5. DNS
 Ajoutez un enregistrement DNS de type `A` chez votre registraire :
 - **Host** : `logsonar`
-- **Value** : `L'IP de votre serveur`
+- **Value** : `L’IP de votre serveur`
 
 ### 6. Démarrer LogSonar et générer le SSL
 ```bash
@@ -171,34 +175,38 @@ docker exec votre-nginx nginx -s reload
 ## Authentification et Sécurité
 
 ### Système de connexion
-1. **Étape 1** : Nom d'utilisateur + mot de passe
-2. **Étape 2** : Code OTP à 6 chiffres envoyé par email (ou affiché dans les logs si SMTP non configuré)
+1. **Étape 1** : Nom d’utilisateur + mot de passe
+2. **Étape 2** : Code OTP à 6 chiffres envoyé par email (ou affiché dans les logs si Brevo non configuré)
 
 ### Gestion des utilisateurs
 
 | Rôle | Permissions | Limite |
 |------|-------------|--------|
-| **Superuser** | Tout (dashboard, live, rapports, paramètres, gestion users, scan deps) | **1 max** |
+| **Superuser** | Tout (dashboard, live, rapports, paramètres, gestion users, scan deps, scan système) | **1 max** |
 | **User** | Lecture uniquement (dashboard, live, rapports en lecture seule) | **1 max** |
 
 **Contraintes système :**
 - Maximum **2 utilisateurs actifs** au total
-- La suppression d'un utilisateur le désactive (`is_active = 0`), libérant sa place
-- Le mot de passe SMTP est chiffré en AES-128 (Fernet) en base de données.
+- La suppression d’un utilisateur le **supprime physiquement** de la base (libère sa place)
+- Le mot de passe SMTP (Brevo) est chiffré en AES‑128 (Fernet) en base de données.
 
 ### Créer un utilisateur standard
-Via l'interface : Connectez-vous en superuser → **Utilisateurs** → bouton **Ajouter**
+Via l’interface : Connectez‑vous en superuser → **Utilisateurs** → bouton **Ajouter**
 
 ---
 
-## Configuration SMTP
+## Configuration des Emails (Brevo)
 
-1. Connectez-vous en superuser → **Paramètres**
-2. Renseignez l'hôte (ex: `smtp.gmail.com`), le port (`587`), l'utilisateur et le mot de passe d'application.
+LogSonar utilise désormais **Brevo** (ex‑Sendinblue) pour l’envoi des emails. Plus besoin de serveur SMTP.
+
+1. Connectez‑vous en superuser → **Paramètres**
+2. Renseignez :
+   - **Clé API Brevo** (générée depuis votre compte Brevo)
+   - **Expéditeur** (adresse email vérifiée dans votre compte Brevo)
 3. Cliquez sur **"Envoyer un test"** pour vérifier.
 4. Cliquez sur **"Sauvegarder"**.
 
-> **Note Gmail** : Utilisez un "Mot de passe d'application" (Sécurité → Vérification en 2 étapes → Mots de passe d'application).
+> **Note** : Si Brevo n’est pas configuré, les codes OTP s’affichent en console (`docker logs -f logsonar-app`).
 
 ---
 
@@ -213,9 +221,9 @@ logsonar/
 ├── requirements.txt             # Dépendances Python
 │
 ├── app/                         # Backend Python
-│   ├── main.py                  # Point d'entrée FastAPI + Moteur d'analyse
-│   ├── db.py                    # SQLite (WAL) + Users + OTP + Fernet
-│   ├── mailer.py                # SMTP asynchrone
+│   ├── main.py                  # Point d’entrée FastAPI + Moteur d’analyse
+│   ├── db.py                    # SQLite (WAL) + Users + OTP + Fernet + purge auto
+│   ├── mailer.py                # Envoi via Brevo (API REST)
 │   └── reporter.py              # Générateur de rapports HTML
 │
 ├── static/                      # Frontend
@@ -224,45 +232,111 @@ logsonar/
 │
 └── data/                        # Volume persistant
     ├── logsonar.db              # Base de données
-    ├── .secret_key              # Clé Fernet SMTP (perms 600)
+    ├── .secret_key              # Clé Fernet (perms 600)
     ├── .jwt_secret              # Clé JWT auto-générée (perms 600)
     └── reports/                 # Rapports quotidiens
 ```
 
 ---
 
-## Signatures de Détection (17 types)
+## Signatures de Détection (23 types)
 
-LogSonar analyse les requêtes **peu importe le code de retour** (200, 404, 500...).
+LogSonar analyse les requêtes **peu importe le code de retour** (200, 404, 500…).
 
-### Signatures Regex (15 types)
-1. **Injection SQL** : `UNION SELECT`, `OR 1=1`, `DROP TABLE`...
-2. **XSS** : `<script>`, `javascript:`, `onerror=`...
-3. **Path Traversal** : `../../../etc/passwd`...
-4. **Injection de Commande** : `; ls`, `$(whoami)`...
-5. **Log4Shell (Log4J)** : `${jndi:ldap://...}`...
-6. **SSRF** : `url=http://169.254.169.254`...
-7. **XXE** : `<!DOCTYPE`, `<!ENTITY`...
-8. **Redirection Ouverte** : `redirect=https://evil.com`...
-9. **Scan de vulnérabilités (Bots)** : `Sqlmap`, `Nmap`, `Nikto`...
-10. **Fichiers sensibles** : `/.env`, `/wp-admin`, `/.git/`...
-11. **Alertes internes** : `SuspiciousOperation`, `LOGSONAR_POST_ATTACK`...
-12. **CSRF** : Échecs de validation de token.
-13. **SSTI (Template)** : `{{7*7}}`, `${7*7}`...
-14. **Désérialisation** : `rO0AB` (Java), `__reduce__` (Python)...
-15. **Recherche d'infos** : `id_rsa`, `.aws/credentials`...
+### Signatures Regex (19 types)
+1. **Injection SQL** : `UNION SELECT`, `OR 1=1`, `DROP TABLE`…
+2. **XSS** : `<script>`, `javascript:`, `onerror=`…
+3. **Path Traversal** : `../../../etc/passwd`…
+4. **Injection de Commande** : `; ls`, `$(whoami)`…
+5. **Log4Shell (Log4J)** : `${jndi:ldap://…}`…
+6. **SSRF** : `url=http://169.254.169.254`…
+7. **XXE** : `<!DOCTYPE`, `<!ENTITY`…
+8. **Redirection Ouverte** : `redirect=https://evil.com`…
+9. **Scan de vulnérabilités (Bots)** : `Sqlmap`, `Nmap`, `Nikto`, `User-Agent vide`…
+10. **Scan de routeurs / IoT** : `/storage/apply.cgi`, `/JNAP/`, `/hndUnblock.cgi`… (détection des scanners d’équipements réseau)
+11. **Fichiers sensibles** : `/.env`, `/wp-admin`, `/.git/`…
+12. **Alertes internes** : `SuspiciousOperation`, `LOGSONAR_POST_ATTACK`…
+13. **CSRF** : Échecs de validation de token.
+14. **SSTI (Template)** : `{{7*7}}`, `${7*7}`…
+15. **Désérialisation** : `rO0AB` (Java), `__reduce__` (Python)…
+16. **Recherche d’infos** : `id_rsa`, `.aws/credentials`…
 
 ### Détections Comportementales (2 types)
-16. **Bruteforce** : >10 req/min (même IP + même path).
-17. **Flood** : >30 req/30s (même IP).
+17. **Bruteforce** : > 20 req/min (même IP + même path) – seuil paramétrable.
+18. **Flood** : > 30 req/30s (même IP) – seuil paramétrable.
+
+### Détections supplémentaires (Post / ciblées)
+19. **Injection SQL (POST)** : détection sur les chemins POST suspects.
+20. **Injection de Commande (POST)** : sur les POST contenant des métacaractères shell.
+21. **Upload malveillant (POST)** : tentative d’upload de scripts PHP/ASP/JSP.
+
+> **Note** : Pour une détection complète sur les requêtes POST (analyse du corps), configurez Nginx pour logger `$request_body` (voir section “Optimisations”).
 
 ---
 
-## Notes Spécifiques
+## Scan des dépendances
 
-- **Requêtes POST** : Les serveurs web ne loguent pas le corps des POST. Ajoutez un middleware dans votre app pour loguer `LOGSONAR_POST_ATTACK` si un payload dangereux est détecté.
-- **Alertes Email** : Rate-limitées (cooldown de 60s par IP/type) pour éviter la saturation. Seules les attaques réussies (2xx) déclenchent des alertes.
-- **Scan Deps** : Nécessite `pip` et un accès internet dans les conteneurs scannés.
+### Paquets Python
+- Liste prioritaire de ~50 paquets (Django, FastAPI, Celery, DRF, Pillow, PyJWT, etc.).
+- Comparaison avec la dernière version disponible sur PyPI.
+- Affichage des paquets obsolètes dans une modal dédiée.
+
+### Services système
+- Détection des versions de **Nginx**, **OpenSSL**, **PostgreSQL**, **Redis**, **Node.js**, **Python**…
+- Comparaison avec la dernière version stable (via Docker Hub).
+- Alerte si une mise à jour est nécessaire.
+
+---
+
+## Gestion des logs et purge automatique
+
+- Les événements sont conservés dans `data/logsonar.db`.
+- Une purge automatique supprime les événements de plus de **60 jours** (paramètre `_RETENTION_DAYS` dans `db.py`).
+- Vous pouvez lancer manuellement une purge depuis l’interface (bouton dédié en développement) ou via l’API.
+
+---
+
+## Whitelist IP / CIDR
+
+Pour éviter les faux positifs (scanners légitimes, IP internes), vous pouvez whitelister des IPs ou des plages CIDR :
+
+```python
+# Dans main.py
+WHITELIST_IPS = {"172.18.0.5", "41.77.188.2", "66.132.172.186"}
+WHITELIST_CIDRS = ["66.132.172.0/24", "66.132.176.0/24"]
+```
+
+Les requêtes provenant de ces adresses seront ignorées (ni alertes, ni logs d’attaque).
+
+---
+
+## Optimisations et Bonnes Pratiques
+
+### 1. Augmenter les seuils comportementaux
+Si vous recevez trop de faux positifs (ex: recharges de l’interface admin), ajustez dans `main.py` :
+
+```python
+_BRUTE_THRESHOLD = 100
+_FLOOD_THRESHOLD = 150
+_ALERT_COOLDOWN_SECONDS = 600   # 10 minutes entre deux emails
+```
+
+### 2. Logger le corps des requêtes POST (Nginx)
+Ajoutez dans la configuration Nginx :
+
+```nginx
+log_format main '$remote_addr - $remote_user [$time_local] "$request" $status $body_bytes_sent "$http_referer" "$http_user_agent" "$request_body"';
+access_log /var/log/nginx/access.log main;
+```
+
+Cela peut augmenter la taille des logs et exposer des données sensibles. À utiliser avec précaution.
+
+### 3. Activer la purge automatique
+La purge est déjà configurée par défaut. Vous pouvez modifier la durée dans `db.py` :
+
+```python
+_RETENTION_DAYS = 180   # 6 mois
+```
 
 ---
 
@@ -276,11 +350,12 @@ docker
 bcrypt
 pyjwt
 cryptography
+aiohttp          # pour l’API Brevo
 ```
 
 ---
 
 ## Licence
 
-Ce projet est open-source et libre d'utilisation.
+Ce projet est open‑source et libre d’utilisation.  
 Créé avec patience, beaucoup de café, et un zeste de paranoïa sécuritaire.

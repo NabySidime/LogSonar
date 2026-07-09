@@ -16,7 +16,7 @@ from cryptography.fernet import Fernet
 DB_PATH         = "data/logsonar.db"
 _CRYPTO_KEY_PATH = "data/.secret_key"
 _ENCRYPTED_KEYS  = {"smtp_password"}
-_RETENTION_DAYS  = 60  # ← Durée de rétention des attaques en jours
+_RETENTION_DAYS  = 90  # ← Durée de rétention des attaques en jours
 
 # ---------------------------------------------------------------------------
 # CHIFFREMENT FERNET
@@ -179,7 +179,7 @@ async def save_critical_event(event_data: dict) -> None:
         await db.commit()
 
 # ---------------------------------------------------------------------------
-# PURGE — Suppression des vieilles attaques (rétention 60 jours)
+# PURGE — Suppression des vieilles attaques (rétention 90 jours)
 # ---------------------------------------------------------------------------
 async def purge_old_events() -> int:
     """
@@ -296,11 +296,11 @@ async def has_superuser() -> bool:
         return (await cursor.fetchone())[0] > 0
 
 async def delete_user(user_id: int) -> None:
-    """Supprime (désactive) un utilisateur."""
+    """Supprime physiquement un utilisateur."""
     db = await get_db()
     async with _db_lock:
         await db.execute(
-            "UPDATE users SET is_active = 0 WHERE id = ?",
+            "DELETE FROM users WHERE id = ?",
             (user_id,),
         )
         await db.commit()

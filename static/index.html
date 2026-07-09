@@ -550,6 +550,47 @@
         </div>
     </div>
 
+    <!-- MODAL SCAN SYSTÈME -->
+    <div id="sysModal" class="fixed inset-0 bg-black/50 backdrop-blur-sm z-[70] hidden opacity-0 transition-opacity duration-300" onclick="closeSysModal()">
+        <div class="absolute inset-0 flex items-start justify-center p-4 pt-[5vh] overflow-y-auto" onclick="event.stopPropagation()">
+            <div class="bg-white dark:bg-dark-800 rounded-2xl border border-neutral-200 dark:border-dark-700 w-full max-w-3xl shadow-xl transform scale-95 transition-transform duration-300" id="sysModalPanel">
+                
+                <!-- Header -->
+                <div class="flex items-center justify-between p-6 pb-0">
+                    <div>
+                        <h3 class="text-lg font-semibold text-neutral-900 dark:text-white">Scan des services système</h3>
+                        <p class="text-sm text-neutral-400 dark:text-dark-500 mt-0.5">Vérification des versions de Nginx, OpenSSL, etc.</p>
+                    </div>
+                    <button onclick="closeSysModal()" class="p-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-dark-700 transition-colors">
+                        <i data-lucide="x" class="w-5 h-5 text-neutral-500 dark:text-dark-400"></i>
+                    </button>
+                </div>
+
+                <!-- Loading -->
+                <div id="sysLoading" class="hidden p-12 text-center">
+                    <div class="w-10 h-10 border-2 border-neutral-200 dark:border-dark-600 border-t-neutral-900 dark:border-t-white rounded-full animate-spin mx-auto mb-4"></div>
+                    <p class="text-sm text-neutral-500 dark:text-dark-400">Scan des services système en cours...</p>
+                    <p class="text-xs text-neutral-400 dark:text-dark-500 mt-1">Cela peut prendre quelques secondes</p>
+                </div>
+
+                <!-- Error -->
+                <div id="sysError" class="hidden mx-6 mt-6 p-4 bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-900/20 rounded-xl text-sm text-red-700 dark:text-red-400"></div>
+
+                <!-- Content -->
+                <div id="sysContent" class="p-6 space-y-5"></div>
+
+                <!-- Empty -->
+                <div id="sysEmpty" class="hidden p-12 text-center">
+                    <div class="w-16 h-16 rounded-2xl bg-neutral-100 dark:bg-dark-700 flex items-center justify-center mx-auto mb-4">
+                        <i data-lucide="server-off" class="w-8 h-8 text-neutral-300 dark:text-dark-600"></i>
+                    </div>
+                    <p class="text-neutral-500 dark:text-dark-400 font-medium">Aucun service critique détecté</p>
+                    <p class="text-xs text-neutral-400 dark:text-dark-500 mt-1">Les conteneurs doivent avoir apk, apt ou yum installé</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- MODAL CREATE USER -->
     <div id="createUserModal" class="fixed inset-0 bg-black/50 backdrop-blur-sm z-[70] hidden opacity-0 transition-opacity duration-300" onclick="closeCreateUserModal()">
         <div class="absolute inset-0 flex items-center justify-center p-4" onclick="event.stopPropagation()">
@@ -772,7 +813,16 @@
                 c.innerHTML = '<button onclick="generateReport()" class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-neutral-900 dark:bg-white text-white dark:text-black text-sm font-medium hover:bg-black dark:hover:bg-neutral-200 transition-colors"><i data-lucide="plus" class="w-4 h-4"></i><span class="hidden sm:inline">Generer</span></button>';
                 lucide.createIcons();
             } else if (page === 'dashboard' && isSuperuser) {
-                c.innerHTML = '<button onclick="scanDeps()" id="scanDepsBtn" class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-neutral-900 dark:bg-white text-white dark:text-black text-sm font-medium hover:bg-black dark:hover:bg-neutral-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"><i data-lucide="package-search" class="w-4 h-4" id="scanDepsIcon"></i><span class="hidden sm:inline" id="scanDepsText">Scanner Deps</span></button>';
+                c.innerHTML = `
+                    <button onclick="scanDeps()" id="scanDepsBtn" class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-neutral-900 dark:bg-white text-white dark:text-black text-sm font-medium hover:bg-black dark:hover:bg-neutral-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                        <i data-lucide="package-search" class="w-4 h-4" id="scanDepsIcon"></i>
+                        <span class="hidden sm:inline" id="scanDepsText">Scanner Deps</span>
+                    </button>
+                    <button onclick="scanSystemDeps()" id="scanSystemBtn" class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-neutral-900 dark:bg-white text-white dark:text-black text-sm font-medium hover:bg-black dark:hover:bg-neutral-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                        <i data-lucide="server" class="w-4 h-4" id="scanSystemIcon"></i>
+                        <span class="hidden sm:inline" id="scanSystemText">Scanner Sys</span>
+                    </button>
+                `;
                 lucide.createIcons();
             }
         }
@@ -1432,6 +1482,155 @@
                     icon.setAttribute('data-lucide', 'package-search');
                 }
                 if (text) text.textContent = 'Scanner Deps';
+                lucide.createIcons();
+            }
+        }
+
+        // ==================== SCAN SYSTÈME ====================
+        function openSysModal() {
+            var modal = document.getElementById('sysModal');
+            var panel = document.getElementById('sysModalPanel');
+            modal.classList.remove('hidden');
+            requestAnimationFrame(function() {
+                modal.classList.remove('opacity-0'); modal.classList.add('opacity-100');
+                panel.classList.remove('scale-95'); panel.classList.add('scale-100');
+            });
+        }
+
+        function closeSysModal() {
+            var modal = document.getElementById('sysModal');
+            var panel = document.getElementById('sysModalPanel');
+            modal.classList.remove('opacity-100'); modal.classList.add('opacity-0');
+            panel.classList.remove('scale-100'); panel.classList.add('scale-95');
+            setTimeout(function() { modal.classList.add('hidden'); }, 300);
+        }
+
+        async function scanSystemDeps() {
+            var btn = document.getElementById('scanSystemBtn');
+            var icon = document.getElementById('scanSystemIcon');
+            var text = document.getElementById('scanSystemText');
+            var loading = document.getElementById('sysLoading');
+            var content = document.getElementById('sysContent');
+            var empty = document.getElementById('sysEmpty');
+            var error = document.getElementById('sysError');
+
+            // Reset
+            content.innerHTML = '';
+            empty.classList.add('hidden');
+            error.classList.add('hidden');
+            loading.classList.remove('hidden');
+
+            if (btn) {
+                btn.disabled = true;
+                btn.classList.add('opacity-50', 'cursor-not-allowed');
+            }
+            if (icon) {
+                icon.setAttribute('data-lucide', 'loader-2');
+                icon.classList.add('animate-spin');
+            }
+            if (text) text.textContent = 'Scan en cours...';
+            lucide.createIcons();
+
+            try {
+                var res = await apiFetch('/api/containers/system-scan');
+                var data = await res.json();
+                loading.classList.add('hidden');
+
+                if (data.error) {
+                    error.textContent = data.error;
+                    error.classList.remove('hidden');
+                    openSysModal();
+                    return;
+                }
+
+                // Vérifier si des données existent
+                var hasData = false;
+                var html = '';
+
+                data.forEach(function(container) {
+                    if (container.packages && container.packages.length > 0) {
+                        hasData = true;
+                        var outdatedCount = container.packages.filter(function(p) { return p.status === 'outdated'; }).length;
+
+                        html += '<div class="bg-neutral-50 dark:bg-dark-900 rounded-xl border border-neutral-200 dark:border-dark-700 overflow-hidden">';
+                        
+                        // Header conteneur
+                        html += '<div class="px-5 py-3.5 border-b border-neutral-200 dark:border-dark-700 flex items-center justify-between">';
+                        html += '<div class="flex items-center gap-3">';
+                        html += '<div class="w-8 h-8 rounded-lg bg-purple-100 dark:bg-purple-900/20 flex items-center justify-center"><i data-lucide="server" class="w-4 h-4 text-purple-500"></i></div>';
+                        html += '<div><p class="font-semibold text-sm font-mono">' + escapeHtml(container.container) + '</p>';
+                        html += '<p class="text-xs text-neutral-400">' + container.total + ' service' + (container.total > 1 ? 's' : '') + ' critique' + (container.total > 1 ? 's' : '') + ' vérifié' + (container.total > 1 ? 's' : '') + '</p></div></div>';
+                        
+                        // Badges résumé
+                        html += '<div class="flex items-center gap-2">';
+                        if (outdatedCount > 0) html += '<span class="px-2.5 py-1 text-xs font-bold rounded-full bg-red-100 dark:bg-red-900/20 text-red-600 dark:text-red-400">' + outdatedCount + ' obsolète' + (outdatedCount > 1 ? 's' : '') + '</span>';
+                        var upToDateCount = container.packages.filter(function(p) { return p.status === 'up_to_date'; }).length;
+                        if (upToDateCount > 0) html += '<span class="px-2.5 py-1 text-xs font-bold rounded-full bg-green-100 dark:bg-green-900/20 text-green-600 dark:text-green-400">' + upToDateCount + ' à jour</span>';
+                        var unknownCount = container.packages.filter(function(p) { return p.status === 'unknown'; }).length;
+                        if (unknownCount > 0) html += '<span class="px-2.5 py-1 text-xs font-bold rounded-full bg-neutral-100 dark:bg-dark-700 text-neutral-500 dark:text-dark-400">' + unknownCount + ' inconnu' + (unknownCount > 1 ? 's' : '') + '</span>';
+                        html += '</div></div>';
+
+                        // Liste des paquets
+                        html += '<div class="divide-y divide-neutral-200 dark:divide-dark-700">';
+                        container.packages.forEach(function(pkg) {
+                            var badge = '';
+                            var iconPkg = '';
+                            if (pkg.status === 'outdated') {
+                                badge = '<span class="px-2 py-0.5 text-[10px] font-bold rounded-full bg-red-100 dark:bg-red-900/20 text-red-600 dark:text-red-400">OBSOLÈTE</span>';
+                                iconPkg = '<i data-lucide="alert-triangle" class="w-4 h-4 text-red-500 flex-shrink-0"></i>';
+                            } else if (pkg.status === 'up_to_date') {
+                                badge = '<span class="px-2 py-0.5 text-[10px] font-bold rounded-full bg-green-100 dark:bg-green-900/20 text-green-600 dark:text-green-400">À JOUR</span>';
+                                iconPkg = '<i data-lucide="check-circle" class="w-4 h-4 text-green-500 flex-shrink-0"></i>';
+                            } else {
+                                badge = '<span class="px-2 py-0.5 text-[10px] font-bold rounded-full bg-neutral-100 dark:bg-dark-700 text-neutral-500 dark:text-dark-400">INCONNU</span>';
+                                iconPkg = '<i data-lucide="help-circle" class="w-4 h-4 text-neutral-400 flex-shrink-0"></i>';
+                            }
+
+                            html += '<div class="px-5 py-3 flex items-center justify-between gap-4 hover:bg-neutral-100 dark:hover:bg-dark-800 transition-colors">';
+                            html += '<div class="flex items-center gap-3 min-w-0">';
+                            html += iconPkg;
+                            html += '<div class="min-w-0"><p class="text-sm font-medium font-mono">' + escapeHtml(pkg.display_name || pkg.name) + '</p>';
+                            html += '<p class="text-xs text-neutral-400 mt-0.5">' + escapeHtml(pkg.category) + ' \u00b7 Installée: ' + escapeHtml(pkg.current);
+                            if (pkg.status === 'outdated' && pkg.latest) {
+                                html += ' \u2192 Dernière: <span class="text-red-500 font-semibold">' + escapeHtml(pkg.latest) + '</span>';
+                            }
+                            html += '</p></div></div>';
+                            html += badge;
+                            html += '</div>';
+                        });
+                        html += '</div>';
+
+                        html += '</div>';
+                    }
+                });
+
+                if (!hasData) {
+                    empty.classList.remove('hidden');
+                    openSysModal();
+                    lucide.createIcons();
+                    return;
+                }
+
+                content.innerHTML = html;
+                openSysModal();
+                lucide.createIcons();
+
+            } catch (e) {
+                loading.classList.add('hidden');
+                error.textContent = 'Erreur lors du scan : ' + (e.message || 'Erreur réseau');
+                error.classList.remove('hidden');
+                openSysModal();
+                lucide.createIcons();
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                }
+                if (icon) {
+                    icon.classList.remove('animate-spin');
+                    icon.setAttribute('data-lucide', 'server');
+                }
+                if (text) text.textContent = 'Scanner Système';
                 lucide.createIcons();
             }
         }
