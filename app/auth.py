@@ -90,49 +90,32 @@ def generate_otp_code() -> str:
     return "".join(secrets.choice("0123456789") for _ in range(6))
 
 async def send_otp_to_user(username: str) -> dict:
-    """
-    Génère et envoie un OTP.
-    Retourne {"sent": True} si email envoyé, {"sent": False, "code": "123456"} sinon.
-    """
     user = await get_user_by_username(username)
     if not user:
         raise ValueError("Utilisateur introuvable")
     
     code = generate_otp_code()
-    store_otp(username, code, ttl_seconds=300)  # 5 min
+    store_otp(username, code, ttl_seconds=300)
     
-    # Vérifier si SMTP est configuré
-    smtp_host = await get_setting('smtp_host')
-    smtp_user = await get_setting('smtp_user')
-    smtp_password = await get_setting('smtp_password')
+    # Tentative d'envoi via Brevo (la fonction retourne un booléen)
+    sent = await send_otp_email(user["email"], code, user["username"])
     
-    if smtp_host and smtp_user and smtp_password and smtp_password != "********":
-        # Envoi email
-        try:
-            await send_otp_email(user["email"], code, user["username"])
-            return {"sent": True, "code": None}
-        except Exception as e:
-            print(f"LogSonar: Erreur envoi OTP email -> {e}")
-            # Fallback : retourner le code pour affichage console
-            print(f"=" * 60)
-            print(f"LogSonar: CODE OTP pour {username}")
-            print(f"  Code: {code}")
-            print(f"  Email: {user['email']}")
-            print(f"=" * 60)
-            return {"sent": False, "code": code}
+    if sent:
+        return {"sent": True, "code": None}
     else:
-        # SMTP non configuré → code visible dans les logs
-        print(f"=" * 60)
-        print(f"LogSonar: SMTP non configuré — CODE OTP pour {username}")
+        # Fallback : afficher le code dans les logs
+        print("=" * 60)
+        print(f"LogSonar: CODE OTP pour {username}")
         print(f"  Code: {code}")
         print(f"  Email: {user['email']}")
-        print(f"  Configurez SMTP dans Paramètres pour activer l'envoi par email.")
-        print(f"=" * 60)
+        print("  Configurez Brevo (clé API + expéditeur) dans Paramètres.")
+        print("=" * 60)
         return {"sent": False, "code": code}
 
 # ---------------------------------------------------------------------------
 # INIT — Création du premier superuser si aucun utilisateur
 # ---------------------------------------------------------------------------
+
 async def init_first_user() -> None:
     """Si aucun utilisateur n'existe, crée un superuser par défaut."""
     count = await count_users()
@@ -156,3 +139,5 @@ async def init_first_user() -> None:
         print(f"=" * 60)
         print(f"CHANGEZ CE MOT DE PASSE IMMÉDIATEMENT !")
         print(f"=" * 60)
+
+        

@@ -53,6 +53,11 @@
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
         .glass-header { backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
         .terminal { background: #0a0a0a; font-family: 'JetBrains Mono', monospace; }
+        .log-entry .break-all {
+            word-break: break-all;
+            white-space: pre-wrap;
+            max-width: 100%;
+        }
         .terminal .log-entry { border-left: 2px solid transparent; padding-left: 12px; margin-left: -2px; }
         .terminal .log-entry:hover { background: rgba(255,255,255,0.02); }
         .terminal .log-entry.attack { background: rgba(239,68,68,0.04); border-left-color: #ef4444; }
@@ -319,6 +324,20 @@
                     </div>
                 </div>
 
+                <!-- CONTENEURS SURVEILLÉS -->
+                <div id="containerPanel" class="hidden bg-white dark:bg-dark-800 rounded-xl border border-neutral-200 dark:border-dark-700 p-6 card-hover">
+                    <div class="flex items-center justify-between mb-5">
+                        <div>
+                            <h3 class="text-sm font-semibold text-neutral-900 dark:text-white">Conteneurs surveillés</h3>
+                            <p class="text-xs text-neutral-400 dark:text-dark-500 mt-0.5">Gérer l'écoute des logs en temps réel</p>
+                        </div>
+                        <button onclick="loadMonitoredContainers()" class="p-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-dark-700 transition-colors">
+                            <i data-lucide="refresh-cw" class="w-4 h-4 text-neutral-400"></i>
+                        </button>
+                    </div>
+                    <div id="containerList" class="space-y-2 max-h-72 overflow-y-auto pr-1"></div>
+                </div>
+
                 <!-- RECENT FEED -->
                 <div class="bg-white dark:bg-dark-800 rounded-xl border border-neutral-200 dark:border-dark-700 p-6 card-hover">
                     <div class="flex items-center justify-between mb-5">
@@ -421,7 +440,7 @@
             <div class="max-w-2xl mx-auto">
                 <div class="mb-8">
                     <h2 class="text-2xl font-bold text-neutral-900 dark:text-white">Configuration</h2>
-                    <p class="text-sm text-neutral-400 dark:text-dark-500 mt-1">Alertes email et serveur SMTP</p>
+                    <p class="text-sm text-neutral-400 dark:text-dark-500 mt-1">Alertes email via Brevo</p>
                 </div>
 
                 <div id="settingsAlert" class="hidden mb-6 p-4 rounded-xl border text-sm font-medium"></div>
@@ -438,32 +457,23 @@
                     </div>
 
                     <div class="border-t border-neutral-200 dark:border-dark-700 pt-6">
-                        <h3 class="text-xs font-bold text-neutral-400 dark:text-dark-500 uppercase tracking-wider mb-4">Configuration SMTP</h3>
-                    </div>
-
-                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                        <div class="sm:col-span-2">
-                            <label class="block text-sm font-medium text-neutral-700 dark:text-dark-300 mb-2">Hôte SMTP</label>
-                            <input type="text" name="smtp_host" class="w-full bg-neutral-50 dark:bg-dark-900 border border-neutral-200 dark:border-dark-600 rounded-lg px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white focus:border-transparent transition-all" placeholder="smtp.gmail.com">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-neutral-700 dark:text-dark-300 mb-2">Port</label>
-                            <input type="number" name="smtp_port" min="1" max="65535" class="w-full bg-neutral-50 dark:bg-dark-900 border border-neutral-200 dark:border-dark-600 rounded-lg px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white focus:border-transparent transition-all" placeholder="587">
-                        </div>
-                    </div>
-
-                    <div>
-                        <label class="block text-sm font-medium text-neutral-700 dark:text-dark-300 mb-2">Utilisateur SMTP</label>
-                        <input type="email" name="smtp_user" class="w-full bg-neutral-50 dark:bg-dark-900 border border-neutral-200 dark:border-dark-600 rounded-lg px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white focus:border-transparent transition-all" placeholder="email@gmail.com">
-                    </div>
-
-                    <div>
-                        <label class="block text-sm font-medium text-neutral-700 dark:text-dark-300 mb-2">Mot de passe SMTP</label>
-                        <input type="password" name="smtp_password" class="w-full bg-neutral-50 dark:bg-dark-900 border border-neutral-200 dark:border-dark-600 rounded-lg px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white focus:border-transparent transition-all" placeholder="Mot de passe d'application">
-                        <p class="text-xs text-neutral-400 dark:text-dark-500 mt-2 flex items-center gap-1.5">
-                            <i data-lucide="lock" class="w-3 h-3"></i>
-                            Chiffré AES-128. Laissez vide pour conserver l'actuel.
+                        <h3 class="text-xs font-bold text-neutral-400 dark:text-dark-500 uppercase tracking-wider mb-4">Configuration Brevo (Sendinblue)</h3>
+                        <p class="text-sm text-neutral-400 dark:text-dark-500 mb-4">
+                            Utilisez l'API Brevo pour envoyer des emails.
+                            <a href="https://www.brevo.com/" target="_blank" class="text-blue-500 hover:underline">Obtenir une clé API</a>
                         </p>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-neutral-700 dark:text-dark-300 mb-2">Clé API Brevo</label>
+                        <input type="password" name="brevo_api_key" class="w-full bg-neutral-50 dark:bg-dark-900 border border-neutral-200 dark:border-dark-600 rounded-lg px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white focus:border-transparent transition-all" placeholder="xkeysib-...">
+                        <p class="text-xs text-neutral-400 dark:text-dark-500 mt-2">Votre clé API (générée depuis votre compte Brevo).</p>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-neutral-700 dark:text-dark-300 mb-2">Expéditeur (email vérifié)</label>
+                        <input type="email" name="brevo_sender_email" class="w-full bg-neutral-50 dark:bg-dark-900 border border-neutral-200 dark:border-dark-600 rounded-lg px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white focus:border-transparent transition-all" placeholder="expediteur@domaine.com">
+                        <p class="text-xs text-neutral-400 dark:text-dark-500 mt-2">Adresse email validée dans votre compte Brevo (expéditeur).</p>
                     </div>
 
                     <div class="flex flex-col sm:flex-row justify-end gap-3 pt-4">
@@ -745,7 +755,7 @@
             document.getElementById('pageTitle').textContent = info.title;
             document.getElementById('pageSubtitle').textContent = info.subtitle;
             updateHeaderActions(page);
-            if (page === 'dashboard') loadDashboard();
+            if (page === 'dashboard') { loadDashboard(); loadMonitoredContainers(); }
             if (page === 'reports') loadReports();
             if (page === 'users') loadUsers();
             if (page === 'settings') loadSettings();
@@ -762,7 +772,7 @@
                 c.innerHTML = '<button onclick="generateReport()" class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-neutral-900 dark:bg-white text-white dark:text-black text-sm font-medium hover:bg-black dark:hover:bg-neutral-200 transition-colors"><i data-lucide="plus" class="w-4 h-4"></i><span class="hidden sm:inline">Generer</span></button>';
                 lucide.createIcons();
             } else if (page === 'dashboard' && isSuperuser) {
-                c.innerHTML = '<button onclick="scanDeps()" id="scanDepsBtn" class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-neutral-900 dark:bg-white text-white dark:text-black text-sm font-medium hover:bg-black dark:hover:bg-neutral-200 transition-colors"><i data-lucide="package-search" class="w-4 h-4"></i><span class="hidden sm:inline">Scanner Deps</span></button>';
+                c.innerHTML = '<button onclick="scanDeps()" id="scanDepsBtn" class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-neutral-900 dark:bg-white text-white dark:text-black text-sm font-medium hover:bg-black dark:hover:bg-neutral-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"><i data-lucide="package-search" class="w-4 h-4" id="scanDepsIcon"></i><span class="hidden sm:inline" id="scanDepsText">Scanner Deps</span></button>';
                 lucide.createIcons();
             }
         }
@@ -795,6 +805,69 @@
             } catch (e) { wsReconnectTimer = setTimeout(connectWS, 5000); }
         }
 
+        // ==================== CONTAINER CONTROLS ====================
+        async function loadMonitoredContainers() {
+            if (!isSuperuser) {
+                var panel = document.getElementById('containerPanel');
+                if (panel) panel.classList.add('hidden');
+                return;
+            }
+            try {
+                var res = await apiFetch('/api/containers/monitored');
+                var containers = await res.json();
+                var list = document.getElementById('containerList');
+                var panel = document.getElementById('containerPanel');
+                if (!list || !panel) return;
+                
+                if (!containers || containers.length === 0) {
+                    panel.classList.add('hidden');
+                    return;
+                }
+                
+                panel.classList.remove('hidden');
+                list.innerHTML = containers.map(function(c) {
+                    var isMuted = c.is_muted;
+                    
+                    // Point : vert = actif, gris = sourdiné
+                    var statusDot = isMuted ? 'bg-neutral-400 dark:bg-dark-500' : 'bg-green-500';
+                    
+                    // Texte : normal vs grisé barré
+                    var textColor = isMuted ? 'text-neutral-400 dark:text-dark-500 line-through' : 'text-neutral-900 dark:text-white';
+                    
+                    // Bouton d'action (visible au survol)
+                    var actionHtml = '';
+                    if (isMuted) {
+                        actionHtml = '<span class="text-xs text-green-600 dark:text-green-400 font-medium">Reprendre</span><i data-lucide="volume-2" class="w-4 h-4 text-green-500"></i>';
+                    } else {
+                        actionHtml = '<span class="text-xs text-red-500 font-medium">Sourdine</span><i data-lucide="volume-x" class="w-4 h-4 text-red-400"></i>';
+                    }
+
+                    return '<div class="flex items-center justify-between py-3 px-4 rounded-xl bg-neutral-50 dark:bg-dark-900 border border-transparent hover:bg-white dark:hover:bg-dark-700 hover:border-neutral-200 dark:hover:border-dark-600 hover:shadow-sm transition-all cursor-pointer group" onclick="toggleContainer(\'' + escapeHtml(c.name) + '\')">' +
+                        '<div class="flex items-center gap-3 min-w-0">' +
+                            '<span class="w-2.5 h-2.5 rounded-full flex-shrink-0 ' + statusDot + '"></span>' +
+                            '<div class="min-w-0">' +
+                                '<p class="text-sm font-mono font-medium truncate ' + textColor + '">' + escapeHtml(c.name) + '</p>' +
+                                '<p class="text-xs text-neutral-400 truncate">' + c.status + '</p>' +
+                            '</div>' +
+                        '</div>' +
+                        '<div class="flex items-center gap-2 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">' +
+                            actionHtml +
+                        '</div>' +
+                    '</div>';
+                }).join('');
+                lucide.createIcons();
+            } catch (e) { console.error('Containers error:', e); }
+        }
+
+        async function toggleContainer(name) {
+            try {
+                var formData = new FormData();
+                formData.append('name', name);
+                await apiFetch('/api/containers/toggle', { method: 'POST', body: formData });
+                loadMonitoredContainers();
+            } catch (e) { alert('Erreur lors du changement de statut'); }
+        }
+
         // ==================== LOG STREAM ====================
         var MAX_LOG_LINES = 500;
         var logLineCount = 0;
@@ -807,34 +880,55 @@
 
         function appendLog(data) {
             if (welcomeBanner) welcomeBanner.style.display = 'none';
+
             logCount++;
             if (data.is_attack) attackCount++;
             document.getElementById('statTotal').textContent = logCount;
             document.getElementById('statAttacks').textContent = attackCount;
+
             if (!isPlaying) return;
+
             var entry = document.createElement('div');
-            entry.className = 'log-entry log-line py-1 px-2 text-xs leading-relaxed' + (data.is_attack ? ' attack' : '');
+            entry.className = `log-entry log-line py-1 px-2 text-xs leading-relaxed ${data.is_attack ? 'attack' : ''}`;
+
             var ts = data.timestamp || '';
             var timeStr = ts.length >= 16 ? ts.substring(11, 19) : ts;
+            var container = data.container || '';
+            var ip = data.ip || 'N/A';
+            var method = data.method || '';
+            var path = data.path || '';
+            var status = data.status || '';
+            var attack = data.attack_type || '';
+
             var html = '<span class="text-neutral-500">' + timeStr + '</span> ';
-            if (data.container) html += '<span class="text-blue-400">[' + escapeHtml(data.container) + ']</span> ';
+            if (container) html += '<span class="text-blue-400">[' + escapeHtml(container) + ']</span> ';
             if (data.is_web) {
-                html += '<span class="text-neutral-300">' + escapeHtml(data.ip || 'N/A') + '</span> ';
-                if (data.method) html += '<span class="text-green-400">' + data.method + '</span> ';
-                if (data.path) html += '<span class="text-yellow-300">' + escapeHtml(data.path) + '</span> ';
-                if (data.status) {
-                    var s = parseInt(data.status);
+                html += '<span class="text-neutral-300">' + escapeHtml(ip) + '</span> ';
+                if (method) html += '<span class="text-green-400">' + method + '</span> ';
+                if (path) html += '<span class="text-yellow-300">' + escapeHtml(path) + '</span> ';
+                if (status) {
+                    var s = parseInt(status);
                     var color = s >= 500 ? 'text-red-400' : s >= 400 ? 'text-orange-400' : s >= 300 ? 'text-blue-300' : 'text-green-300';
-                    html += '<span class="' + color + '">' + data.status + '</span> ';
+                    html += '<span class="' + color + '">' + status + '</span> ';
                 }
             } else {
-                html += '<span class="text-neutral-400">' + escapeHtml((data.raw || '').substring(0, 120)) + '</span> ';
+                // Pour les logs non-web (Nginx, Postgres, etc.), on tronque à 500 caractères pour ne pas exploser la largeur
+                var raw = data.raw || '';
+                html += '<span class="text-neutral-400">' + escapeHtml(raw) + '</span> ';
             }
-            if (data.attack_type) html += '<span class="text-red-500 font-semibold">\u26a0 ' + escapeHtml(data.attack_type) + '</span>';
+            if (attack) {
+                html += '<span class="text-red-500 font-semibold">⚠ ' + escapeHtml(attack) + '</span>';
+            }
             entry.innerHTML = html;
             logStream.appendChild(entry);
             logLineCount++;
-            while (logLineCount > MAX_LOG_LINES) { var first = logStream.querySelector('.log-entry'); if (first) { first.remove(); logLineCount--; } else break; }
+
+            while (logLineCount > MAX_LOG_LINES) {
+                var first = logStream.querySelector('.log-entry');
+                if (first) { first.remove(); logLineCount--; }
+                else break;
+            }
+
             logStream.scrollTop = logStream.scrollHeight;
         }
 
@@ -1078,10 +1172,8 @@
                 var res = await apiFetch('/api/settings');
                 var data = await res.json();
                 document.querySelector('[name="alert_email"]').value = data.alert_email || '';
-                document.querySelector('[name="smtp_host"]').value = data.smtp_host || '';
-                document.querySelector('[name="smtp_port"]').value = data.smtp_port || '';
-                document.querySelector('[name="smtp_user"]').value = data.smtp_user || '';
-                document.querySelector('[name="smtp_password"]').value = data.smtp_password || '';
+                document.querySelector('[name="brevo_api_key"]').value = data.brevo_api_key || '';
+                document.querySelector('[name="brevo_sender_email"]').value = data.brevo_sender_email || '';
             } catch (e) { console.error('Settings error:', e); }
         }
 
@@ -1176,6 +1268,8 @@
 
         async function scanDeps() {
             var btn = document.getElementById('scanDepsBtn');
+            var icon = document.getElementById('scanDepsIcon');
+            var text = document.getElementById('scanDepsText');
             var loading = document.getElementById('depsLoading');
             var content = document.getElementById('depsContent');
             var empty = document.getElementById('depsEmpty');
@@ -1186,13 +1280,22 @@
             empty.classList.add('hidden');
             error.classList.add('hidden');
             loading.classList.remove('hidden');
-            if (btn) btn.disabled = true;
+
+            if (btn) {
+                btn.disabled = true;
+                btn.classList.add('opacity-50', 'cursor-not-allowed');
+            }
+            if (icon) {
+                icon.setAttribute('data-lucide', 'loader-2');
+                icon.classList.add('animate-spin');
+            }
+            if (text) text.textContent = 'Scan en cours...';
+            lucide.createIcons(); // Re-render l'icône spinner
 
             try {
                 var res = await apiFetch('/api/containers/deps');
                 var data = await res.json();
                 loading.classList.add('hidden');
-                if (btn) btn.disabled = false;
 
                 // Si data est une erreur (503)
                 if (data.error) {
@@ -1315,10 +1418,20 @@
 
             } catch (e) {
                 loading.classList.add('hidden');
-                if (btn) btn.disabled = false;
                 error.textContent = 'Erreur lors du scan : ' + (e.message || 'Erreur réseau');
                 error.classList.remove('hidden');
                 openDepsModal();
+                lucide.createIcons();
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                }
+                if (icon) {
+                    icon.classList.remove('animate-spin');
+                    icon.setAttribute('data-lucide', 'package-search');
+                }
+                if (text) text.textContent = 'Scanner Deps';
                 lucide.createIcons();
             }
         }

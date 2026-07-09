@@ -88,6 +88,14 @@ SECRET_KEY = _get_or_create_jwt_secret()
 
 security = HTTPBearer(auto_error=False)
 
+# Ajouter en haut du fichier, après les imports
+# ---------------------------------------------------------------------------
+# WHITELIST IP (IPs légitimes à ne pas flagger)
+# ---------------------------------------------------------------------------
+WHITELIST_IPS: set[str] = {
+    "34.96.41.146",   # ChapChapPay callback
+}
+
 # ---------------------------------------------------------------------------
 # MOTEUR D'ANALYSE — v3
 # ---------------------------------------------------------------------------
@@ -216,9 +224,8 @@ ATTACK_SIGNATURES: dict[str, str] = {
         r"|nuclei|acunetix|burpsuite|zgrab|wfuzz|ffuf"
         r"|hydra|metasploit|openvas|nessus|w3af|skipfish"
         r"|appscan|webinspect|qualysguard|vega|zaproxy|zap"
-        r"|python-requests|go-http-client/1\.1$"
-        r"|curl/[0-9]|wget/[0-9]"
         r"|masscan|zgrab|shodan|censys"
+        r"|^$"
         r")"
     ),
     "Recherche de fichiers sensibles": (
@@ -277,7 +284,7 @@ ATTACK_SIGNATURES: dict[str, str] = {
     ),
 }
 
-_BRUTE_THRESHOLD = 10
+_BRUTE_THRESHOLD = 20
 _BRUTE_WINDOW    = 60
 _FLOOD_THRESHOLD = 30
 _FLOOD_WINDOW    = 30
@@ -286,6 +293,7 @@ _ip_windows: dict = defaultdict(list)
 _ANSI_RE      = re.compile(r'\x1B(?:[@-Z\-_]|\[[0-?]*[ -/]*[@-~])')
 _LOGSONAR_TAG = "logsonar"
 _REPORT_DIR   = Path("data/reports")
+_MUTED_CONTAINERS: set[str] = set()  # Conteneurs dont l'écoute est coupée
 
 
 # ===========================================================================
@@ -384,6 +392,10 @@ def _normalize_payload(raw: str) -> str:
 
 
 def _check_behavioral(ip: str, path: str) -> tuple[bool, str | None]:
+    """
+    Détecte bruteforce (même IP + même path) et flood (même IP toutes cibles).
+    Retourne (is_attack, description).
+    """
     now = _time_module.monotonic()
     key_brute = f"{ip}::{path}"
     key_flood  = f"{ip}::*"
@@ -411,20 +423,11 @@ def _validate_settings(form: dict) -> list[str]:
     email = form.get("alert_email", "")
     if email and not _EMAIL_RE.match(email):
         errors.append("alert_email invalide")
-    smtp_host = form.get("smtp_host", "")
-    if smtp_host and not _HOSTNAME_RE.match(smtp_host):
-        errors.append("smtp_host invalide (caractères non autorisés)")
-    smtp_port = form.get("smtp_port", "")
-    if smtp_port:
-        try:
-            port = int(smtp_port)
-            if not (1 <= port <= 65535):
-                errors.append("smtp_port hors plage (1-65535)")
-        except ValueError:
-            errors.append("smtp_port doit être un entier")
-    smtp_user = form.get("smtp_user", "")
-    if smtp_user and not _EMAIL_RE.match(smtp_user):
-        errors.append("smtp_user invalide (doit être une adresse email)")
+    # Nouveau : validation de l'expéditeur Brevo (si fourni)
+    sender = form.get("brevo_sender_email", "")
+    if sender and not _EMAIL_RE.match(sender):
+        errors.append("brevo_sender_email invalide")
+    # L'API key n'est pas validée par regex, on laisse le test d'envoi la vérifier
     return errors
 
 
@@ -440,6 +443,11 @@ def _safe_report_path(filename: str) -> Path | None:
 
 
 def analyze_log(raw_log: str) -> dict:
+    """
+    Analyse une ligne de log brute.
+    Surfaces inspectées : path, query string (décodé), User-Agent, Referer, log complet.
+    Complété par la détection comportementale (bruteforce / flood).
+    """
     result = {
         "is_web": False, "ip": "N/A", "method": "", "path": "",
         "status": "", "timestamp": "", "is_attack": False,
@@ -481,11 +489,21 @@ def analyze_log(raw_log: str) -> dict:
     norm_referer = _normalize_payload(referer)
     norm_raw     = _normalize_payload(clean)
 
-    surfaces = [path_only, norm_path, ua, norm_ua, referer, norm_referer, norm_raw]
-    for name, pattern in ATTACK_SIGNATURES.items():
-        if any(re.search(pattern, s) for s in surfaces if s):
-            result.update({"is_attack": True, "attack_type": name})
-            return result
+    # --- WHITELIST : ignorer certaines combinaisons ---
+    # Ignorer les callbacks payment depuis ChapChapPay
+    if ip in WHITELIST_IPS and "/payments/callback/" in path_only:
+        # Pas d'alerte pour les callbacks légitimes
+        pass
+    # Ignorer les logs PostgreSQL
+    elif "PostgreSQL" in raw_log or "checkpoint" in raw_log:
+        # Pas d'alerte pour les logs DB
+        pass
+    else:
+        surfaces = [path_only, norm_ua, norm_referer]
+        for name, pattern in ATTACK_SIGNATURES.items():
+            if any(re.search(pattern, s) for s in surfaces if s):
+                result.update({"is_attack": True, "attack_type": name})
+                return result
 
     is_behavioral, btype = _check_behavioral(ip, path_only)
     if is_behavioral:
@@ -528,7 +546,11 @@ def _read_one_container(container_name: str, client: docker.DockerClient, queue:
     try:
         container = client.containers.get(container_name)
         print(f"LogSonar: Écoute {container_name}")
-        for line in container.logs(stream=True, follow=True, tail=50):
+        for line in container.logs(stream=True, follow=True, tail=900):
+            # Vérifie si le conteneur a été mis en sourdine PENDANT l'écoute
+            if container_name in _MUTED_CONTAINERS:
+                print(f"LogSonar: Arrêt de l'écoute de {container_name} (sourdine)")
+                break
             clean = _strip_ansi(line.decode("utf-8", errors="replace").strip())
             if not clean:
                 continue
@@ -561,15 +583,17 @@ async def docker_supervisor(queue: asyncio.Queue) -> None:
         try:
             while True:
                 try:
+                    # FIX : Exécuter dans un thread pour ne pas bloquer l'event loop
+                    containers = await asyncio.to_thread(client.containers.list)
                     active = {
-                        c.name for c in client.containers.list()
+                        c.name for c in containers
                         if not _is_logsonar_container(c.name)
                     }
                 except Exception as e:
                     print(f"LogSonar: Perte de connexion Docker ({e}). Reconnexion...")
                     break
 
-                new_containers = active - watched
+                new_containers = active - watched - _MUTED_CONTAINERS
                 for name in new_containers:
                     print(f"LogSonar: Nouveau conteneur détecté → {name}")
                     task = asyncio.create_task(
@@ -581,6 +605,15 @@ async def docker_supervisor(queue: asyncio.Queue) -> None:
                 stopped = watched - active
                 for name in stopped:
                     print(f"LogSonar: Conteneur arrêté → {name}")
+                    task = reader_tasks.pop(name, None)
+                    if task and not task.done():
+                        task.cancel()
+                    watched.discard(name)
+
+                # FIX : Arrêter les conteneurs mis en sourdine alors qu'ils étaient écoutés
+                newly_muted = watched & _MUTED_CONTAINERS
+                for name in newly_muted:
+                    print(f"LogSonar: Conteneur mis en sourdine → {name}")
                     task = reader_tasks.pop(name, None)
                     if task and not task.done():
                         task.cancel()
@@ -611,6 +644,10 @@ def _is_successful_attack(status: str) -> bool:
 
 
 def _should_send_alert(ip: str, attack_type: str, status: str) -> bool:
+    # Ignorer les alertes pour les IPs whitelistées
+    if ip in WHITELIST_IPS:
+        return False
+    
     if not _is_successful_attack(status):
         return False
     key = f"{ip}::{attack_type}"
@@ -628,15 +665,22 @@ def _should_send_alert(ip: str, attack_type: str, status: str) -> bool:
 async def lifespan(app: FastAPI):
     print("LogSonar: Démarrage...")
     await init_db()
-    scheduler   = asyncio.create_task(daily_report_scheduler())
+    
+    # Démarrer le superviseur Docker global (indépendant des WS)
+    await start_global_supervisor()
+    
+    scheduler = asyncio.create_task(daily_report_scheduler())
     print("LogSonar: Planificateur de rapports démarré.")
+    
     yield
+    
     print("LogSonar: Arrêt en cours...")
+    await stop_global_supervisor()
     scheduler.cancel()
     await close_db()
     print("LogSonar: Arrêt complet.")
 
-app = FastAPI(title="LogSonar", lifespan=lifespan)
+app = FastAPI(title="LogSonar", lifespan=lifespan, websocket_max_message_size=10_000_000)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
@@ -697,23 +741,13 @@ async def api_login(request: Request):
     store_otp(username, otp_code, ttl_seconds=300)
 
     # Tentative d'envoi par email
-    email_sent = False
-    smtp_host = await get_setting('smtp_host')
-    smtp_user = await get_setting('smtp_user')
-    smtp_password = await get_setting('smtp_password')
-
-    if smtp_host and smtp_user and smtp_password and smtp_password != "********":
-        try:
-            await send_otp_email(user["email"], otp_code, username)
-            email_sent = True
-            print(f"LogSonar: OTP envoyé par email à {user['email']}")
-        except Exception as e:
-            print(f"LogSonar: Erreur envoi OTP email -> {e}")
-
-    # Fallback console si email non envoyé
-    if not email_sent:
+    email_sent = await send_otp_email(user["email"], otp_code, username)
+    if email_sent:
+        print(f"LogSonar: OTP envoyé par Brevo à {user['email']}")
+    else:
+        # Fallback console
         print("=" * 60)
-        print(f"LogSonar: SMTP non configuré — CODE OTP pour {username}")
+        print(f"LogSonar: Brevo non configuré — CODE OTP pour {username}")
         print(f"  Code: {otp_code}")
         print(f"  Email: {user['email']}")
         print("=" * 60)
@@ -858,41 +892,38 @@ async def api_delete_user(user_id: int, current_user: dict = Depends(require_sup
 
 @app.get("/api/settings")
 async def api_get_settings(user: dict = Depends(require_superuser)):
-    pwd = await get_setting("smtp_password")
     return {
-        "alert_email":   await get_setting("alert_email"),
-        "smtp_host":     await get_setting("smtp_host"),
-        "smtp_port":     await get_setting("smtp_port"),
-        "smtp_user":     await get_setting("smtp_user"),
-        "smtp_password": "********" if pwd else "",
+        "alert_email":          await get_setting("alert_email"),
+        "brevo_api_key":        await get_setting("brevo_api_key"),
+        "brevo_sender_email":   await get_setting("brevo_sender_email"),
     }
 
 
 @app.post("/api/settings")
 async def api_save_settings(request: Request, user: dict = Depends(require_superuser)):
-    form      = await request.form()
+    form = await request.form()
     form_dict = dict(form)
-    errors    = _validate_settings(form_dict)
+    errors = _validate_settings(form_dict)
     if errors:
         return JSONResponse(status_code=422, content={"status": "error", "errors": errors})
+
     await update_setting("alert_email", form_dict.get("alert_email", ""))
-    await update_setting("smtp_host",   form_dict.get("smtp_host", ""))
-    await update_setting("smtp_port",   form_dict.get("smtp_port", ""))
-    await update_setting("smtp_user",   form_dict.get("smtp_user", ""))
-    new_pwd = form_dict.get("smtp_password", "")
-    if new_pwd and new_pwd != "********":
-        await update_setting("smtp_password", new_pwd)
+    await update_setting("brevo_api_key", form_dict.get("brevo_api_key", ""))
+    await update_setting("brevo_sender_email", form_dict.get("brevo_sender_email", ""))
     return JSONResponse(content={"status": "success"})
 
 
 @app.post("/api/settings/test")
 async def api_test_email(user: dict = Depends(require_superuser)):
     test_data = {
-        "attack_type": "Test de configuration",
-        "ip": "127.0.0.1", "container": "Système",
-        "method": "TEST", "path": "/", "status": "200",
+        "attack_type": "Test de configuration Brevo",
+        "ip": "127.0.0.1",
+        "container": "Système",
+        "method": "TEST",
+        "path": "/",
+        "status": "200",
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "raw": "Si vous lisez ceci, la configuration SMTP de LogSonar est parfaite !",
+        "raw": "Ceci est un email de test depuis LogSonar via Brevo.",
     }
     await send_critical_alert(test_data)
     return JSONResponse(content={"status": "test_sent"})
@@ -988,7 +1019,11 @@ async def _check_pypi_latest(package_name: str) -> str | None:
 
 
 @app.get("/api/containers/deps")
-async def api_containers_deps(user: dict = Depends(require_superuser)):
+async def api_containers_deps(user: dict = Depends(get_current_user)):
+    """
+    Analyse les dépendances Python des conteneurs.
+    Accessible à tous les utilisateurs authentifiés (plus besoin d'être superuser).
+    """
     try:
         client = _connect_docker()
         containers = [c for c in client.containers.list() if not _is_logsonar_container(c.name)]
@@ -1030,6 +1065,40 @@ async def api_containers_deps(user: dict = Depends(require_superuser)):
         })
     return results
 
+# ###########################################################################
+# ROUTES API — CONTENEURS MONITORES
+# ###########################################################################
+
+@app.get("/api/containers/monitored")
+async def api_get_monitored_containers(user: dict = Depends(require_superuser)):
+    try:
+        client = _connect_docker()
+        all_containers = [
+            {"name": c.name, "status": c.status}
+            for c in client.containers.list()
+            if not _is_logsonar_container(c.name)
+        ]
+        return [
+            {**c, "is_muted": c["name"] in _MUTED_CONTAINERS}
+            for c in all_containers
+        ]
+    except Exception as e:
+        return JSONResponse(status_code=503, content={"error": str(e)})
+
+@app.post("/api/containers/toggle")
+async def api_toggle_container(request: Request, user: dict = Depends(require_superuser)):
+    form = await request.form()
+    container_name = form.get("name", "").strip()
+    if not container_name:
+        return JSONResponse(status_code=400, content={"error": "Nom requis"})
+    
+    if container_name in _MUTED_CONTAINERS:
+        _MUTED_CONTAINERS.discard(container_name)
+        return JSONResponse(content={"status": "unmuted"})
+    else:
+        _MUTED_CONTAINERS.add(container_name)
+        return JSONResponse(content={"status": "muted"})
+
 
 # ###########################################################################
 # PLANIFICATEUR DE RAPPORT
@@ -1059,28 +1128,101 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(default=""
         return
 
     await websocket.accept()
-    log_queue: asyncio.Queue = asyncio.Queue(maxsize=2000)
-    supervisor_task = asyncio.create_task(docker_supervisor(log_queue))
+    queue = await get_log_queue()
+    
+    # Queue locale pour ce client
+    local_queue: asyncio.Queue = asyncio.Queue(maxsize=200)
 
-    try:
+    async def forward_to_client():
+        """Transfère les logs de la queue locale vers le client WS."""
         while True:
-            log_data = await log_queue.get()
-            if log_data.get("is_attack"):
-                asyncio.create_task(save_critical_event(log_data))
-                if _should_send_alert(log_data.get("ip", ""), log_data.get("attack_type", ""), log_data.get("status", "")):
-                    asyncio.create_task(send_critical_alert(log_data))
             try:
+                log_data = await local_queue.get()
                 await websocket.send_json(log_data)
             except Exception:
                 break
+
+    # Démarrer le forwarder
+    forwarder_task = asyncio.create_task(forward_to_client())
+
+    try:
+        while True:
+            # Vérifier si le forwarder est toujours vivant
+            if forwarder_task.done():
+                break
+            
+            try:
+                # Attendre un log avec timeout (pour vérifier régulièrement)
+                log_data = await asyncio.wait_for(queue.get(), timeout=2.0)
+            except asyncio.TimeoutError:
+                continue
+            
+            # Traiter le log (DB + alertes une seule fois)
+            if log_data.get("is_attack"):
+                asyncio.create_task(save_critical_event(log_data))
+                if _should_send_alert(
+                    log_data.get("ip", ""), 
+                    log_data.get("attack_type", ""), 
+                    log_data.get("status", "")
+                ):
+                    asyncio.create_task(send_critical_alert(log_data))
+            
+            # Mettre dans la queue locale du client
+            try:
+                local_queue.put_nowait(log_data)
+            except asyncio.QueueFull:
+                # Client trop lent, on drop les anciens logs
+                try:
+                    local_queue.get_nowait()  # Enlever le plus ancien
+                    local_queue.put_nowait(log_data)
+                except asyncio.QueueEmpty:
+                    pass
+            
     except WebSocketDisconnect:
-        pass
+        print("LogSonar: Client WebSocket déconnecté par le client")
+    except Exception as e:
+        print(f"LogSonar: Erreur WebSocket: {e}")
     finally:
-        supervisor_task.cancel()
+        forwarder_task.cancel()
         try:
-            await supervisor_task
-        except asyncio.CancelledError:
+            await asyncio.wait_for(forwarder_task, timeout=1.0)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
             pass
+        print("LogSonar: Client WebSocket déconnecté (superviseur toujours actif)")
+
+# ---------------------------------------------------------------------------
+# QUEUE GLOBALE + SUPERVISEUR
+# ---------------------------------------------------------------------------
+_global_log_queue: asyncio.Queue | None = None
+_supervisor_task: asyncio.Task | None = None
+
+async def get_log_queue() -> asyncio.Queue:
+    """Retourne la queue globale de logs."""
+    global _global_log_queue
+    if _global_log_queue is None:
+        _global_log_queue = asyncio.Queue(maxsize=5000)
+    return _global_log_queue
+
+
+async def start_global_supervisor():
+    """Démarre le superviseur Docker global (une seule fois)."""
+    global _supervisor_task
+    if _supervisor_task is None or _supervisor_task.done():
+        queue = await get_log_queue()
+        _supervisor_task = asyncio.create_task(docker_supervisor(queue))
+        print("LogSonar: Superviseur Docker global démarré.")
+
+
+async def stop_global_supervisor():
+    """Arrête proprement le superviseur."""
+    global _supervisor_task
+    if _supervisor_task and not _supervisor_task.done():
+        _supervisor_task.cancel()
+        try:
+            await asyncio.wait_for(_supervisor_task, timeout=2.0)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            pass
+        print("LogSonar: Superviseur Docker global arrêté.")
 
 
 # ###########################################################################

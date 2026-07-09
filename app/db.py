@@ -132,12 +132,10 @@ async def init_db() -> None:
     """)
 
     defaults = [
-        ("alert_email",   ""),
-        ("smtp_host",     "smtp.gmail.com"),
-        ("smtp_port",     "587"),
-        ("smtp_user",     ""),
-        ("smtp_password", ""),
-        ("ws_token",      secrets.token_urlsafe(32)),
+        ("alert_email",          ""),                         # Destinataire des alertes
+        ("brevo_api_key",        ""),                         # Clé API Brevo (xkeysib-...)
+        ("brevo_sender_email",   ""),                         # Expéditeur vérifié chez Brevo
+        ("ws_token",             secrets.token_urlsafe(32)),  # Token WebSocket (inchangé)
     ]
     for key, value in defaults:
         await _db.execute(
