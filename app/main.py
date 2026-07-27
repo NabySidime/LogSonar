@@ -2,6 +2,16 @@
 main.py — Point d'entrée LogSonar
 Lecture Docker avec retry exponentiel + re-détection des nouveaux conteneurs.
 Auth JWT + OTP + RBAC (superuser/user)
+
+=== CORRECTIFS v2.0 (voir audit) ===
+- LogBroadcaster : fan-out WebSocket (fin du partage de logs entre clients/reconnexions)
+- Rejeu d'historique (tail) limité au 1er démarrage, marqué historical=True,
+  exclu du scoring comportemental et des alertes (fin des rafales de faux positifs)
+- Coupe-circuit global anti-rafale sur les emails d'alerte
+- Scheduler de rapport quotidien blindé contre les exceptions silencieuses
+- Fallback Docker TCP non authentifié désactivé par défaut
+- Plus aucune valeur spécifique à un client (whitelist IP, domaines de redirection,
+  logs à ignorer) codée en dur : tout passe par des variables d'environnement
 """
 import asyncio
 import re
@@ -90,13 +100,21 @@ SECRET_KEY = _get_or_create_jwt_secret()
 
 security = HTTPBearer(auto_error=False)
 
-# Ajouter en haut du fichier, après les imports
 # ---------------------------------------------------------------------------
-# WHITELIST IP (IPs légitimes à ne pas flagger)
+# CONFIGURATION SPÉCIFIQUE AU DÉPLOIEMENT
 # ---------------------------------------------------------------------------
-WHITELIST_IPS: set[str] = {
-    "34.96.41.146",   # ChapChapPay callback
-}
+# CORRECTIF : plus aucune valeur propre à un client (IP, domaine, motif de log à
+# ignorer) codée en dur dans le moteur de détection. Tout se règle par variables
+# d'environnement, propres à chaque installation. Voir .env.example.
+def _parse_csv_env(name: str, default: str = "") -> list[str]:
+    raw = os.environ.get(name, default)
+    return [x.strip() for x in raw.split(",") if x.strip()]
+
+WHITELIST_IPS: set[str] = set(_parse_csv_env("LOGSONAR_WHITELIST_IPS"))
+ALLOWED_REDIRECT_DOMAINS: list[str] = [
+    d.lower() for d in _parse_csv_env("LOGSONAR_ALLOWED_REDIRECT_DOMAINS", "localhost,127.0.0.1")
+]
+IGNORE_LOG_SUBSTRINGS: list[str] = _parse_csv_env("LOGSONAR_IGNORE_LOG_SUBSTRINGS", "PostgreSQL,checkpoint")
 
 # ---------------------------------------------------------------------------
 # MOTEUR D'ANALYSE — v3
@@ -216,10 +234,10 @@ ATTACK_SIGNATURES: dict[str, str] = {
         r"|%(?:xxe|file|data|payload);"
         r")"
     ),
-    "Tentative de Redirection Ouverte": (
-        r"(?i)(?:redirect|return|next|url|goto|dest|destination|continue|returnTo|r|u|link|ref)="
-        r"(?:https?://(?!(?:tikipay|localhost|127\.0\.0\.1)))"
-    ),
+    # CORRECTIF : la "Redirection Ouverte" a été retirée d'ici. Elle référençait un
+    # domaine ("tikipay") propre à un client précédent, en dur dans une regex censée
+    # être générique. Elle est désormais gérée dynamiquement par _check_open_redirect(),
+    # configurable via LOGSONAR_ALLOWED_REDIRECT_DOMAINS (voir .env.example).
     "Scan de vulnérabilités (Bot)": (
         r"(?i)("
         r"sqlmap|nikto|nmap|masscan|dirbuster|gobuster"
@@ -227,7 +245,6 @@ ATTACK_SIGNATURES: dict[str, str] = {
         r"|hydra|metasploit|openvas|nessus|w3af|skipfish"
         r"|appscan|webinspect|qualysguard|vega|zaproxy|zap"
         r"|masscan|zgrab|shodan|censys"
-        r"|^$"
         r"|/(?:storage|apply|hndUnblock|tmUnblock|JNAP|HNAP1|cgi-bin|goform|boaform)/"
         r"|\.cgi$"
         r"|/device\.rsp"
@@ -240,6 +257,7 @@ ATTACK_SIGNATURES: dict[str, str] = {
         r"\.env(?:\.|$|/)"
         r"|\.env\.(?:local|production|prod|dev|development|docker|bak|old|backup)"
         r"|wp-(?:admin|login|config|includes|content)"
+        r"|wp-json/gravitysmtpv1/tests/mock-data"
         r"|/etc/(?:passwd|shadow|hosts|crontab|sudoers|group|gshadow)"
         r"|phpmyadmin|pma/|myadmin"
         r"|\.git/(?:HEAD|config|logs|index|refs|objects|packed)"
@@ -271,13 +289,9 @@ ATTACK_SIGNATURES: dict[str, str] = {
     ),
     "Tentative d'Injection de Template (SSTI)": (
         r"(?i)("
-        r"\{\{.*\}\}"
-        r"|\$\{.*\}"
-        r"|<%.*%>"
-        r"|\{\%.*\%\}"
-        r"|\#\{.*\}"
-        r"|\{\{7\*7\}\}|\{\{config\}\}"
+        r"\{\{7\*7\}\}|\{\{config\}\}"
         r"|\$\{7\*7\}|\$\{T\(java"
+        r"|<%.*%>"
         r")"
     ),
     "Tentative de Désérialisation Malveillante": (
@@ -285,18 +299,42 @@ ATTACK_SIGNATURES: dict[str, str] = {
         r"rO0AB"
         r"|O:[0-9]+:\"[a-zA-Z]"
         r"|__reduce__|__import__|pickle"
-        r"|YTozO|TzM6|YTo"
         r"|aced0005"
         r")"
     ),
 }
+# NOTE SSTI : le pattern générique `\{\{.*\}\}` a été retiré (voir audit §0.3) : il
+# matchait n'importe quel gabarit Vue/Angular/JSON présent dans des logs légitimes.
+# On ne garde que des charges utiles d'exploitation avérées (payloads de preuve de
+# concept type {{7*7}}), beaucoup plus spécifiques. Si vous avez besoin d'une détection
+# plus large, ajoutez-la avec un score de confiance réduit plutôt qu'un flag binaire
+# (voir section "Scoring" de l'audit).
 
 _BRUTE_THRESHOLD = 200
 _BRUTE_WINDOW    = 120
 _FLOOD_THRESHOLD = 250
 _FLOOD_WINDOW    = 60
 _ALERT_COOLDOWN_SECONDS = 600
+_ALERT_TYPE_COOLDOWN_HOURS = 1
 _ip_windows: dict = defaultdict(list)
+
+# CORRECTIF : coupe-circuit global anti-rafale. Même si chaque (IP, type) individuel
+# respecte son propre cooldown, une rafale multi-IP/multi-type (ex. rejeu de logs
+# après un hoquet Docker, ou une nouvelle règle trop large) ne doit jamais générer
+# des dizaines d'emails d'un coup. Voir audit §0.4.
+_GLOBAL_ALERT_WINDOW_SECONDS = 600
+_GLOBAL_ALERT_MAX = 20
+_global_alert_timestamps: list[float] = []
+
+def _global_alert_budget_available() -> bool:
+    now = _time_module.monotonic()
+    while _global_alert_timestamps and now - _global_alert_timestamps[0] > _GLOBAL_ALERT_WINDOW_SECONDS:
+        _global_alert_timestamps.pop(0)
+    if len(_global_alert_timestamps) >= _GLOBAL_ALERT_MAX:
+        return False
+    _global_alert_timestamps.append(now)
+    return True
+
 
 _ANSI_RE      = re.compile(r'\x1B(?:[@-Z\-_]|\[[0-?]*[ -/]*[@-~])')
 _LOGSONAR_TAG = "logsonar"
@@ -307,6 +345,9 @@ _MUTED_CONTAINERS: set[str] = set()  # Conteneurs dont l'écoute est coupée
 # ===========================================================================
 # AUTHENTIFICATION — JWT + OTP + RBAC
 # ===========================================================================
+# NOTE : ceci est la SEULE implémentation d'authentification du projet.
+# Le fichier auth.py (ancien doublon, jamais importé, avec un flux différent
+# basé sur des cookies) doit être supprimé — voir audit §1 et §4.
 
 def _hash_password(password: str) -> str:
     if pwd_context:
@@ -353,7 +394,6 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
             headers={"WWW-Authenticate": "Bearer"},
         )
     except Exception:
-        # InvalidSignatureError ou autre erreur JWT inattendue
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token invalide",
@@ -399,6 +439,24 @@ def _normalize_payload(raw: str) -> str:
     return s
 
 
+_REDIRECT_PARAM_RE = re.compile(
+    r'(?i)(?:redirect|return|next|url|goto|dest|destination|continue|returnTo|r|u|link|ref)='
+    r'(https?%3A%2F%2F[^&\s"\']+|https?://[^&\s"\']+)'
+)
+
+def _check_open_redirect(path_qs: str) -> bool:
+    """
+    Détecte une redirection vers un domaine externe non autorisé.
+    CORRECTIF : les domaines autorisés se configurent via
+    LOGSONAR_ALLOWED_REDIRECT_DOMAINS (jamais en dur dans le code — voir audit §0.3).
+    """
+    for match in _REDIRECT_PARAM_RE.finditer(path_qs):
+        target = unquote_plus(unquote(match.group(1))).lower()
+        if not any(domain in target for domain in ALLOWED_REDIRECT_DOMAINS):
+            return True
+    return False
+
+
 def _check_behavioral(ip: str, path: str) -> tuple[bool, str | None]:
     """
     Détecte bruteforce (même IP + même path) et flood (même IP toutes cibles).
@@ -431,11 +489,9 @@ def _validate_settings(form: dict) -> list[str]:
     email = form.get("alert_email", "")
     if email and not _EMAIL_RE.match(email):
         errors.append("alert_email invalide")
-    # Nouveau : validation de l'expéditeur Brevo (si fourni)
     sender = form.get("brevo_sender_email", "")
     if sender and not _EMAIL_RE.match(sender):
         errors.append("brevo_sender_email invalide")
-    # L'API key n'est pas validée par regex, on laisse le test d'envoi la vérifier
     return errors
 
 
@@ -450,16 +506,22 @@ def _safe_report_path(filename: str) -> Path | None:
     return resolved
 
 
-def analyze_log(raw_log: str) -> dict:
+def analyze_log(raw_log: str, historical: bool = False) -> dict:
     """
     Analyse une ligne de log brute.
     Surfaces inspectées : path, query string (décodé), User-Agent, Referer, log complet.
     Complété par la détection comportementale (bruteforce / flood).
+
+    CORRECTIF : le paramètre `historical` marque les lignes rejouées depuis l'historique
+    d'un conteneur (tail au démarrage). Ces lignes ne participent JAMAIS au scoring
+    comportemental (sinon un simple redémarrage produit un faux "flood" instantané —
+    voir audit §0.2) et ne déclenchent jamais d'alerte email (voir websocket_endpoint).
     """
     result = {
         "is_web": False, "ip": "N/A", "method": "", "path": "",
         "status": "", "timestamp": "", "is_attack": False,
         "attack_type": None, "raw": raw_log, "ua": "", "referer": "",
+        "historical": historical,
     }
     clean = _ANSI_RE.sub("", raw_log)
     match = LOG_PATTERN.search(clean)
@@ -492,30 +554,30 @@ def analyze_log(raw_log: str) -> dict:
         "ua": ua, "referer": referer,
     })
 
-    norm_path    = _normalize_payload(path_qs)
     norm_ua      = _normalize_payload(ua)
     norm_referer = _normalize_payload(referer)
-    norm_raw     = _normalize_payload(clean)
 
-    # --- WHITELIST : ignorer certaines combinaisons ---
-    # Ignorer les callbacks payment depuis ChapChapPay
-    if ip in WHITELIST_IPS and "/payments/callback/" in path_only:
-        # Pas d'alerte pour les callbacks légitimes
+    # --- WHITELIST / IGNORE : configurable par déploiement, jamais en dur ---
+    if ip in WHITELIST_IPS:
         pass
-    # Ignorer les logs PostgreSQL
-    elif "PostgreSQL" in raw_log or "checkpoint" in raw_log:
-        # Pas d'alerte pour les logs DB
+    elif any(s in raw_log for s in IGNORE_LOG_SUBSTRINGS):
         pass
     else:
+        if _check_open_redirect(path_qs):
+            result.update({"is_attack": True, "attack_type": "Tentative de Redirection Ouverte"})
+            return result
+
         surfaces = [path_only, norm_ua, norm_referer]
         for name, pattern in ATTACK_SIGNATURES.items():
             if any(re.search(pattern, s) for s in surfaces if s):
                 result.update({"is_attack": True, "attack_type": name})
                 return result
 
-    is_behavioral, btype = _check_behavioral(ip, path_only)
-    if is_behavioral:
-        result.update({"is_attack": True, "attack_type": btype})
+    # CORRECTIF : jamais de scoring comportemental sur du rejeu d'historique.
+    if not historical:
+        is_behavioral, btype = _check_behavioral(ip, path_only)
+        if is_behavioral:
+            result.update({"is_attack": True, "attack_type": btype})
 
     return result
 
@@ -523,10 +585,19 @@ def analyze_log(raw_log: str) -> dict:
 # ---------------------------------------------------------------------------
 # DOCKER
 # ---------------------------------------------------------------------------
-_DOCKER_URLS = (
-    "unix:///var/run/docker.sock",
-    "tcp://host.docker.internal:2375",
-)
+# CORRECTIF SÉCURITÉ CRITIQUE : le fallback TCP non authentifié n'est plus actif
+# par défaut. Un socket Docker exposé en clair sur le réseau, sans TLS ni
+# authentification, équivaut à un accès root non protégé sur l'hôte. Ne
+# l'activer qu'en connaissance de cause, en développement local uniquement.
+_DOCKER_URLS: tuple[str, ...] = ("unix:///var/run/docker.sock",)
+if os.environ.get("LOGSONAR_ALLOW_TCP_DOCKER") == "1":
+    _tcp_url = os.environ.get("LOGSONAR_DOCKER_TCP_URL", "tcp://host.docker.internal:2375")
+    _DOCKER_URLS = _DOCKER_URLS + (_tcp_url,)
+    print(
+        f"LogSonar: ATTENTION — fallback Docker TCP non authentifié activé ({_tcp_url}). "
+        f"À réserver strictement au développement local."
+    )
+
 _RETRY_DELAYS = (1, 2, 4, 8, 16, 30)
 
 
@@ -542,6 +613,24 @@ def _connect_docker() -> docker.DockerClient:
     raise ConnectionError("Impossible de joindre le démon Docker.")
 
 
+_api_docker_client: docker.DockerClient | None = None
+_api_docker_lock = asyncio.Lock()
+
+
+async def get_shared_docker_client() -> docker.DockerClient:
+    global _api_docker_client
+    async with _api_docker_lock:
+        if _api_docker_client is not None:
+            try:
+                await asyncio.to_thread(_api_docker_client.ping)
+                return _api_docker_client
+            except Exception:
+                _api_docker_client = None  # mort, on en recrée un ci-dessous
+
+        _api_docker_client = await asyncio.to_thread(_connect_docker)
+        return _api_docker_client
+    
+
 def _strip_ansi(text: str) -> str:
     return _ANSI_RE.sub('', text)
 
@@ -550,32 +639,98 @@ def _is_logsonar_container(name: str) -> bool:
     return _LOGSONAR_TAG in name.lower()
 
 
-def _read_one_container(container_name: str, client: docker.DockerClient, queue: asyncio.Queue) -> None:
+# ---------------------------------------------------------------------------
+# DIFFUSION DES LOGS — CORRECTIF FAN-OUT (voir audit §0.1)
+# ---------------------------------------------------------------------------
+class LogBroadcaster:
+    """
+    Diffuse chaque événement à TOUS les clients WebSocket abonnés.
+    Remplace l'ancienne queue globale unique, sur laquelle plusieurs clients
+    (deux onglets, ou une reconnexion pendant qu'une ancienne connexion se
+    termine) se partageaient les logs au lieu d'en recevoir chacun une copie —
+    c'était la cause directe des « faux positifs à l'actualisation ».
+    """
+    def __init__(self, maxsize: int = 500):
+        self._subscribers: set[asyncio.Queue] = set()
+        self._maxsize = maxsize
+
+    def subscribe(self) -> asyncio.Queue:
+        q: asyncio.Queue = asyncio.Queue(maxsize=self._maxsize)
+        self._subscribers.add(q)
+        return q
+
+    def unsubscribe(self, q: asyncio.Queue) -> None:
+        self._subscribers.discard(q)
+
+    def publish(self, item: dict) -> None:
+        for q in list(self._subscribers):
+            try:
+                q.put_nowait(item)
+            except asyncio.QueueFull:
+                # Client trop lent : on drop le plus ancien pour lui, pas pour les autres.
+                try:
+                    q.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+                try:
+                    q.put_nowait(item)
+                except asyncio.QueueFull:
+                    pass
+
+
+log_broadcaster = LogBroadcaster()
+
+
+def _read_one_container(container_name: str, client: docker.DockerClient, tail: int = 0) -> None:
+    """
+    CORRECTIF : le rejeu d'historique (tail) est désormais lu une seule fois, à part,
+    et marqué historical=True (exclu du scoring comportemental et des alertes).
+    Le flux live qui suit ne rejoue plus jamais rien (tail=0) — un redémarrage de
+    lecteur (hoquet Docker) ne peut donc plus produire de rafale de faux positifs.
+    """
     try:
         container = client.containers.get(container_name)
+
+        if tail > 0:
+            try:
+                historical_raw = container.logs(stream=False, tail=tail)
+                for line in historical_raw.decode("utf-8", errors="replace").splitlines():
+                    clean = _strip_ansi(line.strip())
+                    if not clean:
+                        continue
+                    data = analyze_log(clean, historical=True)
+                    data["container"] = container_name
+                    log_broadcaster.publish(data)
+            except Exception as e:
+                print(f"LogSonar: Erreur lecture historique {container_name}: {e}")
+
         print(f"LogSonar: Écoute {container_name}")
-        for line in container.logs(stream=True, follow=True, tail=900):
-            # Vérifie si le conteneur a été mis en sourdine PENDANT l'écoute
+        for line in container.logs(stream=True, follow=True, tail=0):
             if container_name in _MUTED_CONTAINERS:
                 print(f"LogSonar: Arrêt de l'écoute de {container_name} (sourdine)")
                 break
             clean = _strip_ansi(line.decode("utf-8", errors="replace").strip())
             if not clean:
                 continue
-            data = analyze_log(clean)
+            data = analyze_log(clean, historical=False)
             data["container"] = container_name
-            queue.put_nowait(data)
+            log_broadcaster.publish(data)
     except docker.errors.NotFound:
         print(f"LogSonar: Conteneur {container_name} introuvable ou arrêté.")
     except Exception as e:
         print(f"LogSonar: Erreur lecture {container_name}: {type(e).__name__}: {e}")
 
 
-async def docker_supervisor(queue: asyncio.Queue) -> None:
+async def docker_supervisor() -> None:
     retry_idx   = 0
     client      = None
     watched: set[str] = set()
     reader_tasks: dict[str, asyncio.Task] = {}
+    # CORRECTIF : seul le tout premier passage après démarrage rejoue un historique
+    # conséquent (900 lignes). Toute (re)détection ultérieure — hoquet Docker,
+    # redémarrage de conteneur — ne rejoue qu'un historique minime, ce qui limite
+    # drastiquement l'ampleur d'une éventuelle rafale de faux positifs.
+    first_pass = True
 
     while True:
         try:
@@ -591,7 +746,6 @@ async def docker_supervisor(queue: asyncio.Queue) -> None:
         try:
             while True:
                 try:
-                    # FIX : Exécuter dans un thread pour ne pas bloquer l'event loop
                     containers = await asyncio.to_thread(client.containers.list)
                     active = {
                         c.name for c in containers
@@ -603,12 +757,14 @@ async def docker_supervisor(queue: asyncio.Queue) -> None:
 
                 new_containers = active - watched - _MUTED_CONTAINERS
                 for name in new_containers:
-                    print(f"LogSonar: Nouveau conteneur détecté → {name}")
+                    tail = 900 if first_pass else 20
+                    print(f"LogSonar: Nouveau conteneur détecté → {name} (tail={tail})")
                     task = asyncio.create_task(
-                        asyncio.to_thread(_read_one_container, name, client, queue)
+                        asyncio.to_thread(_read_one_container, name, client, tail)
                     )
                     reader_tasks[name] = task
                     watched.add(name)
+                first_pass = False
 
                 stopped = watched - active
                 for name in stopped:
@@ -618,7 +774,6 @@ async def docker_supervisor(queue: asyncio.Queue) -> None:
                         task.cancel()
                     watched.discard(name)
 
-                # FIX : Arrêter les conteneurs mis en sourdine alors qu'ils étaient écoutés
                 newly_muted = watched & _MUTED_CONTAINERS
                 for name in newly_muted:
                     print(f"LogSonar: Conteneur mis en sourdine → {name}")
@@ -640,6 +795,7 @@ async def docker_supervisor(queue: asyncio.Queue) -> None:
 # RATE-LIMITING ALERTES EMAIL
 # ---------------------------------------------------------------------------
 _alert_cooldowns: dict[str, float] = {}
+_alert_type_cooldowns: dict[str, float] = {}
 
 def _is_successful_attack(status: str) -> bool:
     try:
@@ -650,19 +806,114 @@ def _is_successful_attack(status: str) -> bool:
 
 
 def _should_send_alert(ip: str, attack_type: str, status: str) -> bool:
-    # Ignorer les alertes pour les IPs whitelistées
     if ip in WHITELIST_IPS:
         return False
-    
+
+    if attack_type.startswith("Bruteforce") or attack_type.startswith("Flood"):
+        return False
+
     if not _is_successful_attack(status):
         return False
-    key = f"{ip}::{attack_type}"
+
     now = _time_module.monotonic()
+
+    type_key = attack_type
+    if type_key in _alert_type_cooldowns and now - _alert_type_cooldowns[type_key] < (_ALERT_TYPE_COOLDOWN_HOURS * 3600):
+        return False
+
+    key = f"{ip}::{attack_type}"
     if key in _alert_cooldowns and now - _alert_cooldowns[key] < _ALERT_COOLDOWN_SECONDS:
         return False
+
     _alert_cooldowns[key] = now
+    _alert_type_cooldowns[type_key] = now
     return True
 
+
+# ---------------------------------------------------------------------------
+# RATE-LIMITING AUTH — anti-bruteforce login + OTP
+# ---------------------------------------------------------------------------
+class LoginRateLimiter:
+    """
+    Throttling anti-bruteforce sur /api/auth/login et /api/auth/verify-otp.
+    Clé = IP + identifiant ciblé, pour ne pas bloquer tout un NAT partagé contre
+    un seul compte, ni laisser un attaquant contourner le blocage en changeant d'IP
+    contre un compte donné. Verrouillage progressif : plus l'attaquant insiste,
+    plus le blocage s'allonge (5min -> 15min -> 45min ... plafonné à 6h).
+    """
+    MAX_ATTEMPTS = 5
+    WINDOW_SECONDS = 300
+    BASE_LOCKOUT_SECONDS = 300
+    LOCKOUT_MULTIPLIER = 3
+    MAX_LOCKOUT_SECONDS = 3600 * 6
+
+    def __init__(self):
+        self._failures: dict[str, list[float]] = defaultdict(list)
+        self._lockout_until: dict[str, float] = {}
+        self._lockout_strikes: dict[str, int] = defaultdict(int)
+
+    def _key(self, ip: str, identifier: str) -> str:
+        return f"{ip}::{identifier.lower()}"
+
+    def is_locked(self, ip: str, identifier: str) -> tuple[bool, int]:
+        key = self._key(ip, identifier)
+        now = _time_module.monotonic()
+        until = self._lockout_until.get(key)
+        if until and now < until:
+            return True, int(until - now)
+        return False, 0
+
+    def record_failure(self, ip: str, identifier: str) -> None:
+        key = self._key(ip, identifier)
+        now = _time_module.monotonic()
+        self._failures[key] = [t for t in self._failures[key] if now - t < self.WINDOW_SECONDS]
+        self._failures[key].append(now)
+
+        if len(self._failures[key]) >= self.MAX_ATTEMPTS:
+            strikes = self._lockout_strikes[key]
+            lockout_duration = min(
+                self.BASE_LOCKOUT_SECONDS * (self.LOCKOUT_MULTIPLIER ** strikes),
+                self.MAX_LOCKOUT_SECONDS,
+            )
+            self._lockout_until[key] = now + lockout_duration
+            self._lockout_strikes[key] += 1
+            self._failures[key] = []
+            print(f"LogSonar: Verrouillage anti-bruteforce ({identifier} depuis {ip}) — {lockout_duration}s")
+
+    def record_success(self, ip: str, identifier: str) -> None:
+        key = self._key(ip, identifier)
+        self._failures.pop(key, None)
+        self._lockout_until.pop(key, None)
+        self._lockout_strikes[key] = 0
+
+
+_login_rate_limiter = LoginRateLimiter()
+
+
+def _get_client_ip(request: Request) -> str:
+    """Respecte X-Forwarded-For si LogSonar est derrière un reverse proxy."""
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+async def _catch_up_missed_report():
+    """
+    CORRECTIF : si le process était arrêté pendant toute la fenêtre de minuit
+    (crash, redémarrage, mise à jour de version), le rapport de la veille
+    n'est jamais généré. Au démarrage, on vérifie s'il manque et on le génère
+    immédiatement s'il y a eu des événements ce jour-là.
+    """
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    expected_file = _REPORT_DIR / f"rapport_{yesterday}.html"
+    if not expected_file.exists():
+        try:
+            filename = await generate_daily_report(yesterday)
+            if filename:
+                print(f"LogSonar: Rapport manqué détecté au démarrage — {filename} généré rétroactivement.")
+        except Exception as e:
+            print(f"LogSonar: Impossible de générer le rapport rattrapé du {yesterday}: {e}")
 
 # ---------------------------------------------------------------------------
 # LIFESPAN
@@ -671,15 +922,15 @@ def _should_send_alert(ip: str, attack_type: str, status: str) -> bool:
 async def lifespan(app: FastAPI):
     print("LogSonar: Démarrage...")
     await init_db()
-    
-    # Démarrer le superviseur Docker global (indépendant des WS)
+
     await start_global_supervisor()
-    
+    await _catch_up_missed_report()
+
     scheduler = asyncio.create_task(daily_report_scheduler())
     print("LogSonar: Planificateur de rapports démarré.")
-    
+
     yield
-    
+
     print("LogSonar: Arrêt en cours...")
     await stop_global_supervisor()
     scheduler.cancel()
@@ -696,14 +947,12 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.get("/api/auth/check-setup")
 async def api_check_setup():
-    """Vérifie si un superuser existe déjà."""
     needs_setup = not await has_superuser()
     return JSONResponse(content={"needs_setup": needs_setup})
 
 
 @app.post("/api/auth/setup")
 async def api_setup(request: Request):
-    """Crée le premier superuser (uniquement si aucun n'existe)."""
     if await has_superuser():
         raise HTTPException(status_code=403, detail="Un superuser existe déjà")
 
@@ -735,23 +984,29 @@ async def api_login(request: Request):
     if not username or not password:
         raise HTTPException(status_code=400, detail="Username et password requis")
 
+    client_ip = _get_client_ip(request)
+    locked, retry_after = _login_rate_limiter.is_locked(client_ip, username)
+    if locked:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Trop de tentatives. Réessayez dans {retry_after // 60 + 1} minute(s).",
+            headers={"Retry-After": str(retry_after)},
+        )
+
     user = await get_user_by_username(username)
-    if user is None:
+    if user is None or not _verify_password(password, user["password_hash"]):
+        _login_rate_limiter.record_failure(client_ip, username)
         raise HTTPException(status_code=401, detail="Identifiants invalides")
 
-    if not _verify_password(password, user["password_hash"]):
-        raise HTTPException(status_code=401, detail="Identifiants invalides")
+    _login_rate_limiter.record_success(client_ip, username)
 
-    # Générer un code OTP numérique à 6 chiffres
     otp_code = ''.join(secrets.choice('0123456789') for _ in range(6))
     store_otp(username, otp_code, ttl_seconds=300)
 
-    # Tentative d'envoi par email
     email_sent = await send_otp_email(user["email"], otp_code, username)
     if email_sent:
         print(f"LogSonar: OTP envoyé par Brevo à {user['email']}")
     else:
-        # Fallback console
         print("=" * 60)
         print(f"LogSonar: Brevo non configuré — CODE OTP pour {username}")
         print(f"  Code: {otp_code}")
@@ -770,13 +1025,26 @@ async def api_verify_otp(request: Request):
     """Étape 2 : Vérification OTP. Retourne le JWT d'accès."""
     form = await request.form()
     username = form.get("username", "").strip()
-    code = form.get("code", "").strip()  # Le form login.html envoie "code", pas "otp"
+    code = form.get("code", "").strip()
 
     if not username or not code:
         raise HTTPException(status_code=400, detail="Username et code OTP requis")
 
+    client_ip = _get_client_ip(request)
+    otp_identifier = f"otp:{username}"
+    locked, retry_after = _login_rate_limiter.is_locked(client_ip, otp_identifier)
+    if locked:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Trop de tentatives. Réessayez dans {retry_after // 60 + 1} minute(s).",
+            headers={"Retry-After": str(retry_after)},
+        )
+
     if not verify_otp(username, code):
+        _login_rate_limiter.record_failure(client_ip, otp_identifier)
         raise HTTPException(status_code=401, detail="OTP invalide ou expiré")
+
+    _login_rate_limiter.record_success(client_ip, otp_identifier)
 
     user = await get_user_by_username(username)
     if user is None:
@@ -790,10 +1058,8 @@ async def api_verify_otp(request: Request):
         "role": user["role"],
     })
 
-
 @app.get("/api/auth/me")
 async def api_auth_me(user: dict = Depends(get_current_user)):
-    """Retourne les infos de l'utilisateur connecté."""
     return JSONResponse(content={
         "id": user["id"],
         "username": user["username"],
@@ -804,13 +1070,11 @@ async def api_auth_me(user: dict = Depends(get_current_user)):
 
 @app.post("/api/auth/logout")
 async def api_auth_logout():
-    """Déconnexion côté serveur."""
     return JSONResponse(content={"status": "logged_out"})
 
 
 @app.post("/api/auth/create-user")
 async def api_create_user(request: Request, current_user: dict = Depends(require_superuser)):
-    """Crée un nouvel utilisateur (superuser uniquement)."""
     form = await request.form()
     username = form.get("username", "").strip()
     password = form.get("password", "")
@@ -840,7 +1104,6 @@ async def api_create_user(request: Request, current_user: dict = Depends(require
 
 @app.get("/api/users")
 async def api_list_users(current_user: dict = Depends(require_superuser)):
-    """Liste tous les utilisateurs actifs."""
     import aiosqlite
     db = await get_db()
     db.row_factory = aiosqlite.Row
@@ -853,7 +1116,6 @@ async def api_list_users(current_user: dict = Depends(require_superuser)):
 
 @app.post("/api/users/update")
 async def api_update_user(request: Request, current_user: dict = Depends(require_superuser)):
-    """Met à jour un utilisateur (email, password)."""
     form = await request.form()
     user_id = form.get("user_id")
     email = form.get("email", "").strip()
@@ -883,7 +1145,6 @@ async def api_update_user(request: Request, current_user: dict = Depends(require
 
 @app.delete("/api/users/{user_id}")
 async def api_delete_user(user_id: int, current_user: dict = Depends(require_superuser)):
-    """Supprime (désactive) un utilisateur."""
     if user_id == current_user["id"]:
         return JSONResponse(status_code=422, content={
             "status": "error", "message": "Vous ne pouvez pas supprimer votre propre compte"
@@ -940,8 +1201,13 @@ async def api_test_email(user: dict = Depends(require_superuser)):
 # ###########################################################################
 
 @app.get("/api/reports/generate")
-async def api_generate_report(user: dict = Depends(require_superuser)):
-    filename = await generate_daily_report()
+async def api_generate_report(
+    date: str | None = Query(default=None, description="Format YYYY-MM-DD, par défaut aujourd'hui"),
+    user: dict = Depends(require_superuser),
+):
+    if date and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+        return JSONResponse(status_code=422, content={"status": "error", "message": "Format de date invalide (YYYY-MM-DD)"})
+    filename = await generate_daily_report(date)
     if filename:
         return JSONResponse(content={"status": "success", "filename": filename})
     return JSONResponse(content={"status": "no_events"})
@@ -997,68 +1263,27 @@ async def api_get_dashboard(user: dict = Depends(get_current_user)):
 # ROUTES API — ANALYSE DÉPENDANCES CONTENEURS
 # ###########################################################################
 
-#----------------------------------------------------------------------
-# SERVICES CRITIQUES À SURVEILLER (paquets système)
-#----------------------------------------------------------------------
-
 CRITICAL_SERVICES = {
-    "nginx": {
-        "name": "Nginx",
-        "category": "Reverse Proxy / Serveur Web",
-        "url": "https://nginx.org/en/download.html",
-        "docker_image": "nginx",
-    },
-    "apache2": {
-        "name": "Apache HTTP Server",
-        "category": "Serveur Web",
-        "url": "https://httpd.apache.org/download.cgi",
-        "docker_image": "httpd",
-    },
-    "openssl": {
-        "name": "OpenSSL",
-        "category": "Cryptographie / TLS",
-        "url": "https://www.openssl.org/source/",
-        "docker_image": None,
-    },
-    "postgresql": {
-        "name": "PostgreSQL",
-        "category": "Base de données",
-        "url": "https://www.postgresql.org/download/",
-        "docker_image": "postgres",
-    },
-    "mysql": {
-        "name": "MySQL",
-        "category": "Base de données",
-        "url": "https://dev.mysql.com/downloads/",
-        "docker_image": "mysql",
-    },
-    "redis": {
-        "name": "Redis",
-        "category": "Cache / Base de données",
-        "url": "https://redis.io/download/",
-        "docker_image": "redis",
-    },
-    "node": {
-        "name": "Node.js",
-        "category": "Runtime JavaScript",
-        "url": "https://nodejs.org/en/download/",
-        "docker_image": "node",
-    },
-    "python": {
-        "name": "Python",
-        "category": "Runtime Python",
-        "url": "https://www.python.org/downloads/",
-        "docker_image": "python",
-    },
+    "nginx": {"name": "Nginx", "category": "Reverse Proxy / Serveur Web", "url": "https://nginx.org/en/download.html", "docker_image": "nginx"},
+    "apache2": {"name": "Apache HTTP Server", "category": "Serveur Web", "url": "https://httpd.apache.org/download.cgi", "docker_image": "httpd"},
+    "openssl": {"name": "OpenSSL", "category": "Cryptographie / TLS", "url": "https://www.openssl.org/source/", "docker_image": None},
+    "postgresql": {"name": "PostgreSQL", "category": "Base de données", "url": "https://www.postgresql.org/download/", "docker_image": "postgres"},
+    "mysql": {"name": "MySQL", "category": "Base de données", "url": "https://dev.mysql.com/downloads/", "docker_image": "mysql"},
+    "redis": {"name": "Redis", "category": "Cache / Base de données", "url": "https://redis.io/download/", "docker_image": "redis"},
+    "node": {"name": "Node.js", "category": "Runtime JavaScript", "url": "https://nodejs.org/en/download/", "docker_image": "node"},
+    "python": {"name": "Python", "category": "Runtime Python", "url": "https://www.python.org/downloads/", "docker_image": "python"},
 }
 
+
 _LAST_VERSION_CACHE = {}
-_CACHE_TTL = 3600  # 1 heure
+_CACHE_TTL = 3600
+
 
 async def _get_container_pip_packages(container_name: str) -> list[dict]:
+    client = await get_shared_docker_client()
+
     def _run():
         try:
-            client = _connect_docker()
             container = client.containers.get(container_name)
             result = container.exec_run("pip list --format=json", stdout=True, stderr=False)
             if result.exit_code == 0:
@@ -1069,82 +1294,60 @@ async def _get_container_pip_packages(container_name: str) -> list[dict]:
         return []
     return await asyncio.to_thread(_run)
 
+
 async def _get_container_system_packages(container_name: str) -> List[Dict]:
-    """
-    Scanne les paquets système (Nginx, OpenSSL, etc.) dans un conteneur.
-    Retourne une liste de dictionnaires {name, version, category, is_critical}.
-    """
+    client = await get_shared_docker_client()
+
     def _run():
         try:
-            client = _connect_docker()
             container = client.containers.get(container_name)
-            
             packages = []
-            
-            # --- Détection du gestionnaire de paquets ---
-            # 1. Alpine (apk)
+
             result = container.exec_run("which apk", stdout=True, stderr=True)
             if result.exit_code == 0:
-                # Récupérer la liste complète des paquets installés
                 pkgs_output = container.exec_run("apk list -I", stdout=True).output.decode("utf-8", errors="replace")
                 for line in pkgs_output.splitlines():
                     if not line.strip():
                         continue
-                    # Format: "nginx-1.27.0-r0 x86_64 {nginx} (GPL-2.0) [installed]"
                     parts = line.split()
                     if len(parts) >= 2:
                         pkg_name_ver = parts[0]
-                        # Extraire le nom et la version
                         if '-' in pkg_name_ver:
-                            # Séparer le nom du package de sa version
-                            # ex: "nginx-1.27.0-r0" → name="nginx", version="1.27.0-r0"
                             name_parts = pkg_name_ver.split('-')
-                            # Le nom est tout sauf le dernier élément (qui est la version)
-                            # Mais parfois le nom contient des tirets (ex: "postgresql-client")
-                            # On prend tout jusqu'au dernier tiret
                             name = '-'.join(name_parts[:-1]) if len(name_parts) > 1 else pkg_name_ver
                             version = name_parts[-1] if len(name_parts) > 1 else ""
-                            # Vérifier si c'est un service critique
                             is_critical = name in CRITICAL_SERVICES
                             packages.append({
-                                "name": name,
-                                "version": version,
-                                "is_critical": is_critical,
+                                "name": name, "version": version, "is_critical": is_critical,
                                 "category": CRITICAL_SERVICES.get(name, {}).get("category", "Paquet système"),
                                 "display_name": CRITICAL_SERVICES.get(name, {}).get("name", name),
                             })
                 return packages
-            
-            # 2. Debian/Ubuntu (apt)
+
             result = container.exec_run("which apt", stdout=True, stderr=True)
             if result.exit_code == 0:
                 pkgs_output = container.exec_run("apt list --installed", stdout=True).output.decode("utf-8", errors="replace")
                 for line in pkgs_output.splitlines():
                     if not line.strip() or line.startswith("Listing..."):
                         continue
-                    # Format: "nginx/stable,now 1.24.0-1 amd64 [installed]"
                     parts = line.split()
                     if len(parts) >= 2:
                         pkg_name = parts[0].split('/')[0]
                         version = parts[1].split(',')[0]
                         is_critical = pkg_name in CRITICAL_SERVICES
                         packages.append({
-                            "name": pkg_name,
-                            "version": version,
-                            "is_critical": is_critical,
+                            "name": pkg_name, "version": version, "is_critical": is_critical,
                             "category": CRITICAL_SERVICES.get(pkg_name, {}).get("category", "Paquet système"),
                             "display_name": CRITICAL_SERVICES.get(pkg_name, {}).get("name", pkg_name),
                         })
                 return packages
-            
-            # 3. RHEL/CentOS/Fedora (yum/dnf) — si besoin
+
             result = container.exec_run("which yum", stdout=True, stderr=True)
             if result.exit_code == 0:
                 pkgs_output = container.exec_run("yum list installed", stdout=True).output.decode("utf-8", errors="replace")
                 for line in pkgs_output.splitlines():
                     if not line.strip() or line.startswith("Installed Packages"):
                         continue
-                    # Format: "nginx.x86_64        1:1.20.1-1.el7       @epel"
                     parts = line.split()
                     if len(parts) >= 2:
                         pkg_name_ver = parts[0]
@@ -1152,14 +1355,12 @@ async def _get_container_system_packages(container_name: str) -> List[Dict]:
                         pkg_name = pkg_name_ver.split('.')[0] if '.' in pkg_name_ver else pkg_name_ver
                         is_critical = pkg_name in CRITICAL_SERVICES
                         packages.append({
-                            "name": pkg_name,
-                            "version": version,
-                            "is_critical": is_critical,
+                            "name": pkg_name, "version": version, "is_critical": is_critical,
                             "category": CRITICAL_SERVICES.get(pkg_name, {}).get("category", "Paquet système"),
                             "display_name": CRITICAL_SERVICES.get(pkg_name, {}).get("name", pkg_name),
                         })
                 return packages
-            
+
             return []
         except Exception as e:
             print(f"LogSonar: Erreur scan système {container_name}: {e}")
@@ -1167,23 +1368,17 @@ async def _get_container_system_packages(container_name: str) -> List[Dict]:
     return await asyncio.to_thread(_run)
 
 async def _get_latest_version(service_name: str) -> Optional[str]:
-    """
-    Récupère la dernière version stable d'un service via Docker Hub.
-    Utilise un cache pour limiter les requêtes HTTP.
-    """
     import time
     from urllib.request import urlopen, Request
     import json
-    
-    # Vérifier le cache
+
     now = time.time()
     if service_name in _LAST_VERSION_CACHE:
         cached_version, cached_time = _LAST_VERSION_CACHE[service_name]
         if now - cached_time < _CACHE_TTL:
             return cached_version
-    
+
     try:
-        # Récupérer via Docker Hub API
         if service_name in CRITICAL_SERVICES and CRITICAL_SERVICES[service_name]["docker_image"]:
             image = CRITICAL_SERVICES[service_name]["docker_image"]
             url = f"https://hub.docker.com/v2/repositories/library/{image}/tags?page_size=1&page=1&ordering=last_updated"
@@ -1192,9 +1387,7 @@ async def _get_latest_version(service_name: str) -> Optional[str]:
                 data = json.loads(resp.read().decode())
                 if data.get("results") and len(data["results"]) > 0:
                     latest_tag = data["results"][0]["name"]
-                    # Nettoyer le tag (enlever "latest", "stable", etc.)
                     if latest_tag.lower() in ["latest", "stable", "main"]:
-                        # Prendre le deuxième résultat
                         if len(data["results"]) > 1:
                             latest_tag = data["results"][1]["name"]
                         else:
@@ -1204,7 +1397,7 @@ async def _get_latest_version(service_name: str) -> Optional[str]:
                         return latest_tag
     except Exception as e:
         print(f"LogSonar: Erreur récupération version {service_name}: {e}")
-    
+
     return None
 
 async def _check_pypi_latest(package_name: str) -> str | None:
@@ -1221,13 +1414,10 @@ async def _check_pypi_latest(package_name: str) -> str | None:
 
 @app.get("/api/containers/deps")
 async def api_containers_deps(user: dict = Depends(get_current_user)):
-    """
-    Analyse les dépendances Python des conteneurs.
-    Accessible à tous les utilisateurs authentifiés (plus besoin d'être superuser).
-    """
     try:
-        client = _connect_docker()
-        containers = [c for c in client.containers.list() if not _is_logsonar_container(c.name)]
+        client = await get_shared_docker_client()
+        all_containers = await asyncio.to_thread(client.containers.list)
+        containers = [c for c in all_containers if not _is_logsonar_container(c.name)]
     except Exception as e:
         return JSONResponse(status_code=503, content={"error": f"Docker indisponible: {e}"})
 
@@ -1239,112 +1429,24 @@ async def api_containers_deps(user: dict = Depends(get_current_user)):
             continue
 
         PRIORITY_PACKAGES = {
-            # --- Frameworks web principaux ---
-            "django",
-            "flask",
-            "fastapi",
-            "starlette",
-            "tornado",
-            "aiohttp",
-            "sanction",
-            
-            # --- REST API ---
-            "djangorestframework",
-            "drf-yasg",
-            "drf-spectacular",
-            "flask-restx",
-            
-            # --- Auth / Sécurité ---
-            "django-allauth",
-            "python-jose",
-            "pyjwt",
-            "cryptography",
-            "bcrypt",
-            "passlib",
-            "authlib",
-            "oauthlib",
-            "pyotp",
-            "qrcode",
-            
-            # --- Bases de données & ORM ---
-            "sqlalchemy",
-            "psycopg2-binary",
-            "mysqlclient",
-            "pymongo",
-            "redis",
-            "aioredis",
-            
-            # --- Tâches asynchrones / Workers ---
-            "celery",
-            "rq",
-            "dramatiq",
-            "kombu",
-            "billiard",
-            
-            # --- Serveurs HTTP / WSGI ---
-            "gunicorn",
-            "uvicorn",
-            "waitress",
-            "hypercorn",
-            "daphne",
-            
-            # --- Clients HTTP ---
-            "requests",
-            "httpx",
-            "urllib3",
-            
-            # --- Utilitaires de traitement de fichiers ---
-            "pillow",
-            "openpyxl",
-            "xlrd",
-            "reportlab",
-            "weasyprint",
-            
-            # --- Configuration / Environnement ---
-            "python-decouple",
-            "python-dotenv",
-            "django-environ",
-            
-            # --- Middlewares / Utilitaires Django (si Django est utilisé) ---
-            "django-cors-headers",
-            "whitenoise",
-            "django-debug-toolbar",
-            "django-extensions",
-            
-            # --- AWS / Cloud ---
-            "boto3",
-            "botocore",
-            "google-cloud-storage",
-            "azure-storage-blob",
-            
-            # --- SSH / Paramiko ---
-            "paramiko",
-            "fabric",
-            
-            # --- Serialisation / Validation ---
-            "pydantic",
-            "marshmallow",
-            "attrs",
-            "cerberus",
-            
-            # --- Templates ---
-            "jinja2",
-            "mako",
-            
-            # --- Utilitaires système ---
-            "setuptools",
-            "pip",
-            "wheel",
-            
-            # --- Logging / Monitoring ---
-            "sentry-sdk",
-            "prometheus-client",
-            "structlog",
-            
-            # --- Markdown / Documentation (si exposé) ---
-            "mkdocs",
-            "mkdocs-material",
-            "pymdown-extensions",
+            "django", "flask", "fastapi", "starlette", "tornado", "aiohttp", "sanction",
+            "djangorestframework", "drf-yasg", "drf-spectacular", "flask-restx",
+            "django-allauth", "python-jose", "pyjwt", "cryptography", "bcrypt", "passlib",
+            "authlib", "oauthlib", "pyotp", "qrcode",
+            "sqlalchemy", "psycopg2-binary", "mysqlclient", "pymongo", "redis", "aioredis",
+            "celery", "rq", "dramatiq", "kombu", "billiard",
+            "gunicorn", "uvicorn", "waitress", "hypercorn", "daphne",
+            "requests", "httpx", "urllib3",
+            "pillow", "openpyxl", "xlrd", "reportlab", "weasyprint",
+            "python-decouple", "python-dotenv", "django-environ",
+            "django-cors-headers", "whitenoise", "django-debug-toolbar", "django-extensions",
+            "boto3", "botocore", "google-cloud-storage", "azure-storage-blob",
+            "paramiko", "fabric",
+            "pydantic", "marshmallow", "attrs", "cerberus",
+            "jinja2", "mako",
+            "setuptools", "pip", "wheel",
+            "sentry-sdk", "prometheus-client", "structlog",
+            "mkdocs", "mkdocs-material", "pymdown-extensions",
         }
         checked, outdated = [], []
         for pkg in packages:
@@ -1369,7 +1471,6 @@ async def api_containers_deps(user: dict = Depends(get_current_user)):
     return results
 
 
-
 # ###########################################################################
 # ROUTES API — CONTENEURS MONITORES
 # ###########################################################################
@@ -1377,10 +1478,11 @@ async def api_containers_deps(user: dict = Depends(get_current_user)):
 @app.get("/api/containers/monitored")
 async def api_get_monitored_containers(user: dict = Depends(require_superuser)):
     try:
-        client = _connect_docker()
+        client = await get_shared_docker_client()
+        raw_containers = await asyncio.to_thread(client.containers.list)
         all_containers = [
             {"name": c.name, "status": c.status}
-            for c in client.containers.list()
+            for c in raw_containers
             if not _is_logsonar_container(c.name)
         ]
         return [
@@ -1396,7 +1498,7 @@ async def api_toggle_container(request: Request, user: dict = Depends(require_su
     container_name = form.get("name", "").strip()
     if not container_name:
         return JSONResponse(status_code=400, content={"error": "Nom requis"})
-    
+
     if container_name in _MUTED_CONTAINERS:
         _MUTED_CONTAINERS.discard(container_name)
         return JSONResponse(content={"status": "unmuted"})
@@ -1404,63 +1506,47 @@ async def api_toggle_container(request: Request, user: dict = Depends(require_su
         _MUTED_CONTAINERS.add(container_name)
         return JSONResponse(content={"status": "muted"})
 
+
 @app.get("/api/containers/system-scan")
 async def api_containers_system_scan(user: dict = Depends(require_superuser)):
-    """
-    Analyse les paquets système critiques (Nginx, OpenSSL, etc.) des conteneurs.
-    Accessible uniquement aux superusers.
-    """
     try:
-        client = _connect_docker()
-        containers = [c for c in client.containers.list() if not _is_logsonar_container(c.name)]
+        client = await get_shared_docker_client()
+        all_containers = await asyncio.to_thread(client.containers.list)
+        containers = [c for c in all_containers if not _is_logsonar_container(c.name)]
     except Exception as e:
         return JSONResponse(status_code=503, content={"error": f"Docker indisponible: {e}"})
-    
+
     results = []
     for container in containers:
         packages = await _get_container_system_packages(container.name)
         if not packages:
-            results.append({
-                "container": container.name,
-                "status": "no_system_info",
-                "packages": []
-            })
+            results.append({"container": container.name, "status": "no_system_info", "packages": []})
             continue
-        
-        # Filtrer uniquement les services critiques
+
         critical_pkgs = [p for p in packages if p["is_critical"]]
-        
+
         if not critical_pkgs:
-            results.append({
-                "container": container.name,
-                "status": "no_critical_services",
-                "packages": packages
-            })
+            results.append({"container": container.name, "status": "no_critical_services", "packages": packages})
             continue
-        
-        # Pour chaque package critique, vérifier la version
+
         checked = []
         for pkg in critical_pkgs:
             latest = await _get_latest_version(pkg["name"])
             status = "unknown"
             if latest:
-                # Comparer les versions (simple version string, à améliorer avec packaging.version)
                 if latest.lower() == pkg["version"].lower():
                     status = "up_to_date"
                 else:
                     status = "outdated"
             else:
                 status = "unknown"
-            
+
             checked.append({
-                "name": pkg["name"],
-                "display_name": pkg["display_name"],
-                "current": pkg["version"],
-                "latest": latest,
-                "status": status,
+                "name": pkg["name"], "display_name": pkg["display_name"],
+                "current": pkg["version"], "latest": latest, "status": status,
                 "category": pkg["category"],
             })
-        
+
         results.append({
             "container": container.name,
             "status": "scanned",
@@ -1468,7 +1554,7 @@ async def api_containers_system_scan(user: dict = Depends(require_superuser)):
             "outdated": len([p for p in checked if p["status"] == "outdated"]),
             "packages": sorted(checked, key=lambda p: (p["status"] != "outdated", p["name"])),
         })
-    
+
     return results
 
 # ###########################################################################
@@ -1476,18 +1562,27 @@ async def api_containers_system_scan(user: dict = Depends(require_superuser)):
 # ###########################################################################
 
 async def daily_report_scheduler():
+    """
+    CORRECTIF : plus aucune exception (ex. VACUUM en conflit avec une écriture
+    concurrente) ne peut tuer cette tâche de fond silencieusement. `last_run_date`
+    remplace la fenêtre fragile "minute == 0", qui pouvait être ratée après un
+    redémarrage du process pile à cet instant.
+    """
+    last_run_date: str | None = None
     while True:
-        now = datetime.now()
-        if now.hour == 0 and now.minute == 0:
-            print("LogSonar: Minuit — génération du rapport quotidien...")
-            await generate_daily_report()
-            
-            # Nettoyage automatique des vieux logs
-            await purge_old_events()  # ← Ajoute cette ligne
-            
-            await asyncio.sleep(120)
-        else:
-            await asyncio.sleep(30)
+        try:
+            now = datetime.now()
+            today = now.strftime("%Y-%m-%d")
+            if now.hour == 0 and today != last_run_date:
+                print(f"LogSonar: Minuit — génération du rapport du {today}...")
+                await generate_daily_report()
+                await purge_old_events()
+                last_run_date = today
+                print(f"LogSonar: Rapport et purge du {today} terminés.")
+        except Exception as e:
+            print(f"LogSonar: ERREUR dans le planificateur de rapport quotidien "
+                  f"({type(e).__name__}: {e}) — la boucle continue, on réessaiera au prochain cycle.")
+        await asyncio.sleep(30)
 
 
 # ###########################################################################
@@ -1495,96 +1590,95 @@ async def daily_report_scheduler():
 # ###########################################################################
 
 @app.websocket("/ws/logs")
-async def websocket_endpoint(websocket: WebSocket, token: str = Query(default="")):
+async def websocket_endpoint(websocket: WebSocket):
+    """
+    CORRECTIF : le token n'est plus transmis en query string (visible dans les
+    logs d'accès du reverse proxy, l'historique navigateur, et tout intermédiaire
+    réseau). Le client doit désormais l'envoyer comme premier message applicatif
+    juste après la connexion (délai de grâce : 10s).
+    """
+    await websocket.accept()
+
+    try:
+        first_message = await asyncio.wait_for(websocket.receive_text(), timeout=10.0)
+    except (asyncio.TimeoutError, WebSocketDisconnect):
+        await websocket.close(code=4401)
+        print("LogSonar: WebSocket refusé — token manquant ou délai dépassé")
+        return
+
+    try:
+        payload = json.loads(first_message)
+        token = payload.get("token", "")
+    except Exception:
+        token = first_message.strip()
+
     expected = await get_setting("ws_token")
     if not expected or token != expected:
         await websocket.close(code=4401)
-        print(f"LogSonar: WebSocket refusé — token invalide")
+        print("LogSonar: WebSocket refusé — token invalide")
         return
 
-    await websocket.accept()
-    queue = await get_log_queue()
-    
-    # Queue locale pour ce client
-    local_queue: asyncio.Queue = asyncio.Queue(maxsize=200)
+    await websocket.send_json({"type": "auth_ok"})
+    client_queue = log_broadcaster.subscribe()
 
-    async def forward_to_client():
-        """Transfère les logs de la queue locale vers le client WS."""
+    async def sender():
         while True:
             try:
-                log_data = await local_queue.get()
-                await websocket.send_json(log_data)
-            except Exception:
-                break
-
-    # Démarrer le forwarder
-    forwarder_task = asyncio.create_task(forward_to_client())
-
-    try:
-        while True:
-            # Vérifier si le forwarder est toujours vivant
-            if forwarder_task.done():
-                break
-            
-            try:
-                # Attendre un log avec timeout (pour vérifier régulièrement)
-                log_data = await asyncio.wait_for(queue.get(), timeout=2.0)
+                log_data = await asyncio.wait_for(client_queue.get(), timeout=30.0)
             except asyncio.TimeoutError:
                 continue
-            
-            # Traiter le log (DB + alertes une seule fois)
+
+            is_historical = log_data.get("historical", False)
             if log_data.get("is_attack"):
                 asyncio.create_task(save_critical_event(log_data))
-                if _should_send_alert(
-                    log_data.get("ip", ""), 
-                    log_data.get("attack_type", ""), 
-                    log_data.get("status", "")
+                if (
+                    not is_historical
+                    and _should_send_alert(
+                        log_data.get("ip", ""),
+                        log_data.get("attack_type", ""),
+                        log_data.get("status", ""),
+                    )
+                    and _global_alert_budget_available()
                 ):
                     asyncio.create_task(send_critical_alert(log_data))
-            
-            # Mettre dans la queue locale du client
-            try:
-                local_queue.put_nowait(log_data)
-            except asyncio.QueueFull:
-                # Client trop lent, on drop les anciens logs
-                try:
-                    local_queue.get_nowait()  # Enlever le plus ancien
-                    local_queue.put_nowait(log_data)
-                except asyncio.QueueEmpty:
-                    pass
-            
+
+            await websocket.send_json(log_data)
+
+    async def receiver():
+        while True:
+            await websocket.receive_text()
+
+    sender_task = asyncio.create_task(sender())
+    receiver_task = asyncio.create_task(receiver())
+
+    try:
+        done, pending = await asyncio.wait(
+            {sender_task, receiver_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+        for task in pending:
+            task.cancel()
+        for task in done:
+            exc = task.exception() if not task.cancelled() else None
+            if exc and not isinstance(exc, (WebSocketDisconnect, asyncio.CancelledError)):
+                print(f"LogSonar: Erreur WebSocket: {exc}")
     except WebSocketDisconnect:
         print("LogSonar: Client WebSocket déconnecté par le client")
-    except Exception as e:
-        print(f"LogSonar: Erreur WebSocket: {e}")
     finally:
-        forwarder_task.cancel()
-        try:
-            await asyncio.wait_for(forwarder_task, timeout=1.0)
-        except (asyncio.CancelledError, asyncio.TimeoutError):
-            pass
+        log_broadcaster.unsubscribe(client_queue)
         print("LogSonar: Client WebSocket déconnecté (superviseur toujours actif)")
 
-# ---------------------------------------------------------------------------
-# QUEUE GLOBALE + SUPERVISEUR
-# ---------------------------------------------------------------------------
-_global_log_queue: asyncio.Queue | None = None
-_supervisor_task: asyncio.Task | None = None
 
-async def get_log_queue() -> asyncio.Queue:
-    """Retourne la queue globale de logs."""
-    global _global_log_queue
-    if _global_log_queue is None:
-        _global_log_queue = asyncio.Queue(maxsize=5000)
-    return _global_log_queue
+# ---------------------------------------------------------------------------
+# SUPERVISEUR GLOBAL
+# ---------------------------------------------------------------------------
+_supervisor_task: asyncio.Task | None = None
 
 
 async def start_global_supervisor():
     """Démarre le superviseur Docker global (une seule fois)."""
     global _supervisor_task
     if _supervisor_task is None or _supervisor_task.done():
-        queue = await get_log_queue()
-        _supervisor_task = asyncio.create_task(docker_supervisor(queue))
+        _supervisor_task = asyncio.create_task(docker_supervisor())
         print("LogSonar: Superviseur Docker global démarré.")
 
 
@@ -1605,7 +1699,9 @@ async def stop_global_supervisor():
 # ###########################################################################
 
 @app.get("/api/ws-token")
-async def api_get_ws_token():
+async def api_get_ws_token(user: dict = Depends(get_current_user)):
+    """CORRECTIF : cette route n'était protégée par aucune authentification —
+    n'importe qui pouvait récupérer le token WebSocket sans être connecté."""
     token = await get_setting("ws_token")
     return JSONResponse(content={"token": token})
 

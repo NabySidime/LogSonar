@@ -372,15 +372,22 @@
         <!-- PAGE RAPPORTS -->
         <div id="page-reports" class="page-content hidden flex-1 overflow-y-auto bg-neutral-50 dark:bg-dark-950 p-6 lg:p-8">
             <div class="max-w-4xl mx-auto">
-                <div class="flex items-center justify-between mb-8">
+                <div class="flex items-center justify-between mb-8 gap-3 flex-wrap">
                     <div>
                         <h2 class="text-2xl font-bold text-neutral-900 dark:text-white">Rapports quotidiens</h2>
                         <p class="text-sm text-neutral-400 dark:text-dark-500 mt-1">Analyses pédagogiques des attaques détectées</p>
                     </div>
-                    <button onclick="generateReport()" id="generateBtn" class="flex items-center gap-2 bg-neutral-900 dark:bg-white hover:bg-black dark:hover:bg-neutral-200 text-white dark:text-black px-4 py-2.5 rounded-lg text-sm font-medium transition-all shadow-sm hover:shadow-md">
-                        <i data-lucide="plus" class="w-4 h-4"></i>
-                        <span class="hidden sm:inline">Générer</span>
-                    </button>
+                    <div class="flex items-center gap-2">
+                        <input
+                            type="date"
+                            id="reportDateInput"
+                            class="bg-white dark:bg-dark-800 border border-neutral-200 dark:border-dark-600 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white transition-all"
+                        >
+                        <button onclick="generateReport()" id="generateBtn" class="flex items-center gap-2 bg-neutral-900 dark:bg-white hover:bg-black dark:hover:bg-neutral-200 text-white dark:text-black px-4 py-2.5 rounded-lg text-sm font-medium transition-all shadow-sm hover:shadow-md">
+                            <i data-lucide="plus" class="w-4 h-4"></i>
+                            <span class="hidden sm:inline">Générer</span>
+                        </button>
+                    </div>
                 </div>
 
                 <div id="reportGenFeedback" class="hidden mb-4 p-4 rounded-xl border text-sm font-medium"></div>
@@ -833,8 +840,11 @@
                 var res = await apiFetch('/api/ws-token');
                 var data = await res.json();
                 var protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-                ws = new WebSocket(protocol + '//' + location.host + '/ws/logs?token=' + data.token);
+                // CORRECTIF : plus de token dans l'URL — connexion nue, puis envoi du
+                // token comme premier message applicatif juste après ouverture.
+                ws = new WebSocket(protocol + '//' + location.host + '/ws/logs');
                 ws.onopen = function() {
+                    ws.send(JSON.stringify({ token: data.token }));
                     var ind = document.getElementById('wsIndicator');
                     var st = document.getElementById('wsStatus');
                     if (ind) { ind.classList.remove('bg-red-500', 'bg-yellow-500'); ind.classList.add('bg-green-500'); }
@@ -842,7 +852,11 @@
                     if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
                 };
                 ws.onmessage = function(event) {
-                    try { appendLog(JSON.parse(event.data)); } catch (e) {}
+                    try {
+                        var parsed = JSON.parse(event.data);
+                        if (parsed.type === 'auth_ok') return;
+                        appendLog(parsed);
+                    } catch (e) {}
                 };
                 ws.onclose = function() {
                     var ind = document.getElementById('wsIndicator');
@@ -1060,6 +1074,12 @@
 
         // ==================== RAPPORTS ====================
         async function loadReports() {
+            var dateInput = document.getElementById('reportDateInput');
+            if (dateInput) {
+                var today = new Date().toISOString().slice(0, 10);
+                dateInput.max = today;
+                if (!dateInput.value) dateInput.value = today;
+            }
             try {
                 var res = await apiFetch('/api/reports');
                 var reports = await res.json();
@@ -1093,18 +1113,26 @@
         async function generateReport() {
             var btn = document.getElementById('generateBtn');
             var feedback = document.getElementById('reportGenFeedback');
+            var dateInput = document.getElementById('reportDateInput');
+            var selectedDate = dateInput && dateInput.value ? dateInput.value : '';
+            var url = '/api/reports/generate' + (selectedDate ? ('?date=' + encodeURIComponent(selectedDate)) : '');
+
             if (btn) { btn.disabled = true; var span = btn.querySelector('span'); if (span) span.textContent = 'Generation...'; }
             try {
-                var res = await apiFetch('/api/reports/generate');
+                var res = await apiFetch(url);
                 var data = await res.json();
                 feedback.classList.remove('hidden');
                 if (data.status === 'success') {
                     feedback.className = 'mb-4 p-4 rounded-xl border text-sm font-medium bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-900/20 text-green-700 dark:text-green-400';
                     feedback.textContent = 'Rapport ' + data.filename + ' genere avec succes.';
                     loadReports();
+                } else if (data.status === 'error') {
+                    feedback.className = 'mb-4 p-4 rounded-xl border text-sm font-medium bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-900/20 text-red-700 dark:text-red-400';
+                    feedback.textContent = data.message || 'Date invalide.';
                 } else {
                     feedback.className = 'mb-4 p-4 rounded-xl border text-sm font-medium bg-yellow-50 dark:bg-yellow-900/10 border-yellow-200 dark:border-yellow-900/20 text-yellow-700 dark:text-yellow-400';
-                    feedback.textContent = "Aucun evenement a rapporter pour aujourd'hui.";
+                    var label = selectedDate || "aujourd'hui";
+                    feedback.textContent = "Aucun evenement a rapporter pour " + label + ".";
                 }
             } catch (e) {
                 feedback.className = 'mb-4 p-4 rounded-xl border text-sm font-medium bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-900/20 text-red-700 dark:text-red-400';
