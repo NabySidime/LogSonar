@@ -229,7 +229,7 @@ async def generate_daily_report(date_str: str | None = None) -> str | None:
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Rapport LogSonar — {today}</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="/static/vendor/chart.umd.min.js"></script>
 <style>
 :root {{
   --black:#111827;--gray-1:#374151;--gray-2:#6b7280;--gray-3:#9ca3af;

@@ -644,15 +644,20 @@ def _is_logsonar_container(name: str) -> bool:
 # ---------------------------------------------------------------------------
 class LogBroadcaster:
     """
-    Diffuse chaque événement à TOUS les clients WebSocket abonnés.
-    Remplace l'ancienne queue globale unique, sur laquelle plusieurs clients
-    (deux onglets, ou une reconnexion pendant qu'une ancienne connexion se
-    termine) se partageaient les logs au lieu d'en recevoir chacun une copie —
-    c'était la cause directe des « faux positifs à l'actualisation ».
+    Diffuse chaque événement à TOUS les clients WebSocket abonnés (affichage),
+    ET exécute des "ingest handlers" indépendants de tout client connecté
+    (persistance DB, alertes). CORRECTIF CRITIQUE : avant, la sauvegarde des
+    attaques et l'envoi d'alertes ne se déclenchaient QUE si un client WebSocket
+    était connecté au dashboard — sans personne connecté, LogSonar ne
+    détectait plus rien du tout.
     """
     def __init__(self, maxsize: int = 500):
         self._subscribers: set[asyncio.Queue] = set()
         self._maxsize = maxsize
+        self._ingest_handlers: list = []
+
+    def add_ingest_handler(self, handler) -> None:
+        self._ingest_handlers.append(handler)
 
     def subscribe(self) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue(maxsize=self._maxsize)
@@ -663,11 +668,18 @@ class LogBroadcaster:
         self._subscribers.discard(q)
 
     def publish(self, item: dict) -> None:
+        # Ingestion : tourne TOUJOURS, qu'il y ait ou non un client connecté.
+        for handler in self._ingest_handlers:
+            try:
+                handler(item)
+            except Exception as e:
+                print(f"LogSonar: Erreur ingest handler: {e}")
+
+        # Affichage live : uniquement pour les clients réellement abonnés.
         for q in list(self._subscribers):
             try:
                 q.put_nowait(item)
             except asyncio.QueueFull:
-                # Client trop lent : on drop le plus ancien pour lui, pas pour les autres.
                 try:
                     q.get_nowait()
                 except asyncio.QueueEmpty:
@@ -681,12 +693,12 @@ class LogBroadcaster:
 log_broadcaster = LogBroadcaster()
 
 
-def _read_one_container(container_name: str, client: docker.DockerClient, tail: int = 0) -> None:
+def _read_one_container(container_name: str, client: docker.DockerClient, loop: asyncio.AbstractEventLoop, tail: int = 0) -> None:
     """
-    CORRECTIF : le rejeu d'historique (tail) est désormais lu une seule fois, à part,
-    et marqué historical=True (exclu du scoring comportemental et des alertes).
-    Le flux live qui suit ne rejoue plus jamais rien (tail=0) — un redémarrage de
-    lecteur (hoquet Docker) ne peut donc plus produire de rafale de faux positifs.
+    CORRECTIF : publication planifiée sur la boucle d'événements principale via
+    call_soon_threadsafe, au lieu d'un appel direct depuis ce thread — évite
+    toute manipulation non thread-safe de la queue asyncio, et garantit que
+    les ingest handlers (sauvegarde DB, alertes) s'exécutent bien sur le loop.
     """
     try:
         container = client.containers.get(container_name)
@@ -700,7 +712,7 @@ def _read_one_container(container_name: str, client: docker.DockerClient, tail: 
                         continue
                     data = analyze_log(clean, historical=True)
                     data["container"] = container_name
-                    log_broadcaster.publish(data)
+                    loop.call_soon_threadsafe(log_broadcaster.publish, data)
             except Exception as e:
                 print(f"LogSonar: Erreur lecture historique {container_name}: {e}")
 
@@ -714,7 +726,7 @@ def _read_one_container(container_name: str, client: docker.DockerClient, tail: 
                 continue
             data = analyze_log(clean, historical=False)
             data["container"] = container_name
-            log_broadcaster.publish(data)
+            loop.call_soon_threadsafe(log_broadcaster.publish, data)
     except docker.errors.NotFound:
         print(f"LogSonar: Conteneur {container_name} introuvable ou arrêté.")
     except Exception as e:
@@ -726,11 +738,8 @@ async def docker_supervisor() -> None:
     client      = None
     watched: set[str] = set()
     reader_tasks: dict[str, asyncio.Task] = {}
-    # CORRECTIF : seul le tout premier passage après démarrage rejoue un historique
-    # conséquent (900 lignes). Toute (re)détection ultérieure — hoquet Docker,
-    # redémarrage de conteneur — ne rejoue qu'un historique minime, ce qui limite
-    # drastiquement l'ampleur d'une éventuelle rafale de faux positifs.
     first_pass = True
+    loop = asyncio.get_running_loop()  # capturé une fois, transmis aux threads workers
 
     while True:
         try:
@@ -760,7 +769,7 @@ async def docker_supervisor() -> None:
                     tail = 900 if first_pass else 20
                     print(f"LogSonar: Nouveau conteneur détecté → {name} (tail={tail})")
                     task = asyncio.create_task(
-                        asyncio.to_thread(_read_one_container, name, client, tail)
+                        asyncio.to_thread(_read_one_container, name, client, loop, tail)
                     )
                     reader_tasks[name] = task
                     watched.add(name)
@@ -828,6 +837,30 @@ def _should_send_alert(ip: str, attack_type: str, status: str) -> bool:
     _alert_cooldowns[key] = now
     _alert_type_cooldowns[type_key] = now
     return True
+
+
+def _handle_ingest(log_data: dict) -> None:
+    """
+    S'exécute pour CHAQUE ligne de log analysée, qu'un client WebSocket soit
+    connecté ou non. C'est ici — et seulement ici — que la persistance et les
+    alertes se décident désormais.
+    """
+    if log_data.get("historical"):
+        return
+    if not log_data.get("is_attack"):
+        return
+
+    asyncio.create_task(save_critical_event(log_data))
+
+    if _should_send_alert(
+        log_data.get("ip", ""),
+        log_data.get("attack_type", ""),
+        log_data.get("status", ""),
+    ) and _global_alert_budget_available():
+        asyncio.create_task(send_critical_alert(log_data))
+
+
+log_broadcaster.add_ingest_handler(_handle_ingest)
 
 
 # ---------------------------------------------------------------------------
@@ -1592,10 +1625,9 @@ async def daily_report_scheduler():
 @app.websocket("/ws/logs")
 async def websocket_endpoint(websocket: WebSocket):
     """
-    CORRECTIF : le token n'est plus transmis en query string (visible dans les
-    logs d'accès du reverse proxy, l'historique navigateur, et tout intermédiaire
-    réseau). Le client doit désormais l'envoyer comme premier message applicatif
-    juste après la connexion (délai de grâce : 10s).
+    Le WebSocket ne sert plus qu'à l'affichage live. La persistance (DB) et les
+    alertes sont gérées indépendamment par log_broadcaster (voir _handle_ingest),
+    qu'un client soit connecté ou non.
     """
     await websocket.accept()
 
@@ -1627,21 +1659,6 @@ async def websocket_endpoint(websocket: WebSocket):
                 log_data = await asyncio.wait_for(client_queue.get(), timeout=30.0)
             except asyncio.TimeoutError:
                 continue
-
-            is_historical = log_data.get("historical", False)
-            if log_data.get("is_attack"):
-                asyncio.create_task(save_critical_event(log_data))
-                if (
-                    not is_historical
-                    and _should_send_alert(
-                        log_data.get("ip", ""),
-                        log_data.get("attack_type", ""),
-                        log_data.get("status", ""),
-                    )
-                    and _global_alert_budget_available()
-                ):
-                    asyncio.create_task(send_critical_alert(log_data))
-
             await websocket.send_json(log_data)
 
     async def receiver():
