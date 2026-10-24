@@ -4,6 +4,7 @@ d'authentification), limitation des tentatives, contrôle d'accès par rôle.
 """
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import os
 import secrets
@@ -302,6 +303,53 @@ async def _user_from_token(token: str | None) -> Optional[dict]:
     return user
 
 
+# ---------------------------------------------------------------------------
+# Jetons d'accès en LECTURE SEULE (outils externes, assistant...)
+# ---------------------------------------------------------------------------
+READ_TOKEN_PREFIX = "lsr_"
+READ_METHODS = ("GET", "HEAD")
+# Seules ces pages de consultation sont accessibles avec un jeton de lecture.
+# Jamais : paramètres, utilisateurs, compte, temps réel, envoi de données.
+READ_ALLOWED_PREFIXES = (
+    "/api/overview", "/api/host", "/api/containers", "/api/traffic", "/api/security/",
+    "/api/alerts", "/api/system", "/api/vulns/", "/api/reports",
+)
+_token_touch: dict[int, float] = {}
+
+
+def hash_api_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+async def _reader_from_token(token: str, request: Request) -> dict:
+    ip = client_ip(request)
+    key = "readtoken:" + ip
+    wait = ip_limiter.locked_for(key)
+    if wait:
+        raise HTTPException(429, "Trop de tentatives.", headers={"Retry-After": str(wait)})
+    # Lecture seule, vérifiée avant même de regarder le jeton : aucune route d'écriture n'est atteignable
+    if request.method not in READ_METHODS:
+        raise HTTPException(403, "Jeton en lecture seule : seules les requêtes GET sont autorisées.")
+    path = request.url.path
+    if not path.startswith(READ_ALLOWED_PREFIXES):
+        raise HTTPException(403, "Cette page n'est pas accessible avec un jeton de lecture.")
+    row = await db.fetchone(
+        "SELECT * FROM api_tokens WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+        (hash_api_token(token), time.time()))
+    if not row:
+        ip_limiter.failure(key)
+        raise HTTPException(401, "Jeton invalide, expiré ou révoqué.")
+    now = time.time()
+    if now - _token_touch.get(row["id"], 0) > 60:   # une écriture par minute au plus
+        _token_touch[row["id"]] = now
+        await db.execute("UPDATE api_tokens SET last_used_at = ?, last_used_ip = ?, use_count = use_count + 1 WHERE id = ?",
+                         (now, ip, row["id"]))
+    return {
+        "id": -row["id"], "username": f"jeton:{row['name']}", "email": "", "role": "reader",
+        "totp_enabled": 1, "token_version": 0, "created_at": row["created_at"], "last_login": now,
+    }
+
+
 def _token_from_request(request: Request) -> str | None:
     auth = request.headers.get("authorization", "")
     if auth.lower().startswith("bearer "):
@@ -310,7 +358,10 @@ def _token_from_request(request: Request) -> str | None:
 
 
 async def current_user(request: Request) -> dict:
-    user = await _user_from_token(_token_from_request(request))
+    token = _token_from_request(request)
+    if token and token.startswith(READ_TOKEN_PREFIX):
+        return await _reader_from_token(token, request)
+    user = await _user_from_token(token)
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session invalide ou expirée")
     # Protection CSRF : un site tiers ne peut pas envoyer d'en-tête personnalisé

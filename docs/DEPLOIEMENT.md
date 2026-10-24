@@ -24,7 +24,7 @@ git push --force --all
 ### Prérequis du serveur
 - Linux (Debian, Ubuntu…) avec **Docker** et le plugin **docker compose** (v2.24 ou plus récent).
 - 200 Mo de RAM libres et 1 Go de disque.
-- Un sous-domaine si vous voulez accéder à l'interface en HTTPS (ex. `monitor.tikipay.com`), sinon un tunnel SSH suffit.
+- Un sous-domaine si vous voulez accéder à l'interface en HTTPS (ex. `monitor.tikipay.org`), sinon un tunnel SSH suffit.
 
 Vérifier :
 ```bash
@@ -49,7 +49,7 @@ LOGSONAR_INSTANCE_NAME=Tikipay
 TZ=Europe/Paris
 LOGSONAR_TRUSTED_PROXIES=172.16.0.0/12        # réseaux Docker : votre reverse proxy
 LOGSONAR_WHITELIST_IPS=                       # votre IP fixe d'administration, si vous en avez une
-LOGSONAR_ALLOWED_REDIRECT_DOMAINS=tikipay.com
+LOGSONAR_ALLOWED_REDIRECT_DOMAINS=tikipay.org
 ```
 
 ### Choisir le mode de lancement
@@ -86,9 +86,9 @@ Puis ouvrez http://localhost:8081.
 ### Option 2 : sous-domaine HTTPS
 Un exemple Nginx complet est fourni : [`integrations/nginx/logsonar.conf`](../integrations/nginx/logsonar.conf).
 
-1. DNS : un enregistrement `A` `monitor.tikipay.com` → IP du serveur.
+1. DNS : un enregistrement `A` `monitor.tikipay.org` → IP du serveur.
 2. Copiez le fichier dans la configuration Nginx et remplacez le nom de domaine.
-3. Certificat : `sudo certbot --nginx -d monitor.tikipay.com`
+3. Certificat : `sudo certbot --nginx -d monitor.tikipay.org`
 4. `sudo nginx -t && sudo systemctl reload nginx`
 
 Le fichier d'exemple bloque `/api/ingest` depuis Internet : le middleware passe par le réseau Docker interne.
@@ -115,7 +115,7 @@ Le fichier d'exemple bloque `/api/ingest` depuis Internet : le middleware passe 
 | **Gravité minimale** | « Élevée et critique » au début, pour éviter le bruit. |
 | **Rapport quotidien** | Laissez activé : résumé chaque matin, rapport complet par email. |
 | **Seuils** | Gardez les valeurs par défaut la première semaine, puis ajustez. |
-| **Certificats TLS** | `tikipay.com, www.tikipay.com, monitor.tikipay.com` |
+| **Certificats TLS** | `tikipay.org, www.tikipay.org, monitor.tikipay.org` |
 | **Conteneurs surveillés** | Mettez en sourdine les conteneurs sans intérêt (bases de données bavardes…). |
 
 Puis **Rapports → Générer et envoyer** pour vérifier que l'email du rapport arrive bien (avec sa pièce jointe).
@@ -150,7 +150,7 @@ Nécessite le **mode B** de l'étape 1 (LogSonar sur le réseau de Tikipay).
 
 **Tester** (depuis votre PC, remplacez l'URL par une page de formulaire de Tikipay) :
 ```bash
-curl -X POST https://tikipay.com/connexion/ -d "username=admin' OR 1=1--&password=test"
+curl -X POST https://tikipay.org/connexion/ -d "username=admin' OR 1=1--&password=test"
 ```
 Dans LogSonar → **Menaces**, une « Tentative d'Injection SQL » doit apparaître avec « Corps : username=… ». Dans **Paramètres**, l'application « tikipay » doit être marquée *active*.
 
@@ -165,7 +165,7 @@ Pas d'impact si LogSonar est arrêté : le middleware ignore silencieusement les
 - [ ] **Trafic** : les requêtes par minute augmentent quand vous naviguez sur le site.
 - [ ] **Vulnérabilités** : le premier scan se lance quelques secondes après le démarrage (puis chaque nuit à 3 h). L'onglet « Configuration » contient l'audit SSH/pare-feu du serveur.
 - [ ] Une notification de test est arrivée sur chaque canal configuré.
-- [ ] `curl -s https://tikipay.com/.env` → une alerte « Recherche de fichiers sensibles » apparaît dans **Menaces**.
+- [ ] `curl -s https://tikipay.org/.env` → une alerte « Recherche de fichiers sensibles » apparaît dans **Menaces**.
 
 ---
 

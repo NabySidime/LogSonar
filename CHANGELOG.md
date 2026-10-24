@@ -16,6 +16,7 @@ LogSonar devient un outil de surveillance générique pour **n'importe quel serv
 - **Rapport quotidien** : verdict, actions prioritaires, comparaison avec la veille, graphiques ; envoyé automatiquement.
 - **Score de sécurité** sur 100, avec le détail de chaque point perdu.
 - **Nouvelle interface** : temps réel, mode sombre, mobile.
+- **Jetons d'accès en lecture seule** pour consulter les données depuis un outil externe (voir `docs/ACCES-LECTURE.md`).
 
 ### Sécurité
 - Mots de passe bcrypt (la v1 utilisait SHA-256 sans sel).

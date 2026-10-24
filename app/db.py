@@ -18,7 +18,7 @@ from . import config
 _db: Optional[aiosqlite.Connection] = None
 _write_lock = asyncio.Lock()
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -136,6 +136,21 @@ CREATE TABLE IF NOT EXISTS osv_cache (
     vuln_id    TEXT PRIMARY KEY,
     data       TEXT NOT NULL,
     fetched_ts REAL NOT NULL
+);
+
+-- Jetons d'accès en lecture seule (seule l'empreinte SHA-256 est stockée)
+CREATE TABLE IF NOT EXISTS api_tokens (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    name         TEXT NOT NULL,
+    token_hash   TEXT NOT NULL UNIQUE,
+    prefix       TEXT NOT NULL,
+    created_by   TEXT NOT NULL DEFAULT '',
+    created_at   REAL NOT NULL,
+    expires_at   REAL NOT NULL,
+    revoked_at   REAL,
+    last_used_at REAL,
+    last_used_ip TEXT NOT NULL DEFAULT '',
+    use_count    INTEGER NOT NULL DEFAULT 0
 );
 """
 

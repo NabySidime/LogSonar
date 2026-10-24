@@ -18,7 +18,7 @@ LogSonar surveille **n'importe quel projet Docker** sur le serveur, sans modifie
 
 Chaque alerte et chaque faille est **expliquée en clair**, avec la correction à appliquer.
 
-📘 **Documentation** : [Déployer sur un serveur](docs/DEPLOIEMENT.md) · [Utiliser au quotidien](docs/EXPLOITATION.md) · [Historique des versions](CHANGELOG.md)
+📘 **Documentation** : [Déployer sur un serveur](docs/DEPLOIEMENT.md) · [Utiliser au quotidien](docs/EXPLOITATION.md) · [Accès en lecture seule (Claude, scripts)](docs/ACCES-LECTURE.md) · [Historique des versions](CHANGELOG.md)
 
 ---
 
@@ -107,6 +107,7 @@ Un outil de sécurité ne doit pas devenir la porte d'entrée. LogSonar est con�
 - Conteneur **sans root**, système de fichiers en lecture seule, toutes les capacités Linux retirées, `no-new-privileges`.
 - Hôte monté en **lecture seule** (`/proc` et `/`) uniquement pour les métriques et l'audit.
 - **3 comptes maximum** (administrateurs ou lecture seule) : l'accès reste limité à quelques personnes de confiance.
+- **Jetons d'API en lecture seule** pour les outils externes : GET uniquement, liste fermée de pages, expiration, révocation immédiate, empreinte seule stockée.
 - Mots de passe **bcrypt**, **2FA TOTP obligatoire** (codes non réutilisables), session en cookie `HttpOnly` + `SameSite=Strict`, révocation à la déconnexion.
 - Limitation des tentatives par compte **et** par IP ; `X-Forwarded-For` lu seulement depuis vos proxys déclarés.
 - Secrets (clés API, webhooks) **chiffrés** au repos et jamais renvoyés au navigateur.
@@ -151,6 +152,7 @@ app/
 ├── reports.py           Rapport HTML quotidien
 ├── cli.py               Commandes de secours
 ├── api/ingest.py        Réception des requêtes envoyées par le middleware
+├── api/tokens.py        Jetons d'accès en lecture seule
 ├── detection/
 │   ├── signatures.py    Règles d'attaque (+ explications pédagogiques)
 │   ├── parsers.py       Formats de logs HTTP

@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from . import __version__, config, db, security
 from . import settings_store as S
 from .alerts import alerts
-from .api import admin, auth, ingest, monitoring, users, vulns
+from .api import admin, auth, ingest, monitoring, tokens, users, vulns
 from .hub import hub
 from .monitor import monitor
 
@@ -70,7 +70,7 @@ async def unhandled(request: Request, exc: Exception):
     return JSONResponse(status_code=500, content={"detail": "Erreur interne."})
 
 
-for r in (auth.router, users.router, monitoring.router, vulns.router, admin.router, ingest.router):
+for r in (auth.router, users.router, monitoring.router, vulns.router, admin.router, ingest.router, tokens.router):
     app.include_router(r)
 
 app.mount("/static", StaticFiles(directory=config.STATIC_DIR), name="static")

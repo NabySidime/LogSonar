@@ -30,7 +30,7 @@ const numField = (key, label, s, hint = "", suffix = "") => html`<div class="fie
 App.pages.settings = async (view) => {
   setHeader("Paramètres", App.isAdmin() ? "Notifications, seuils d'alerte et surveillance" : "Votre compte");
   if (!App.isAdmin()) { setHTML(view, accountCard()); bindAccount(); return; }
-  const [s, containers, ingest] = await Promise.all([GET("/api/settings"), GET("/api/containers"), GET("/api/settings/ingest")]);
+  const [s, containers, ingest, tokens] = await Promise.all([GET("/api/settings"), GET("/api/containers"), GET("/api/settings/ingest"), GET("/api/tokens")]);
   const muted = new Set(s.muted_containers);
 
   setHTML(view, html`<div class="stack" style="max-width:980px">
@@ -77,6 +77,8 @@ App.pages.settings = async (view) => {
 
     ${ingestCard(ingest)}
 
+    ${tokensCard(tokens)}
+
     ${accountCard()}
   </div>`);
   bindAccount();
@@ -97,6 +99,48 @@ function ingestCard(ing) {
         : html`<p class="small muted" style="margin:0">Django : fichier <code>integrations/django/logsonar_middleware.py</code> du dépôt (instructions en tête du fichier). Autres langages : voir le README.</p>`}
     </div></div>`;
 }
+function tokensCard(t) {
+  const active = t.items.filter((x) => x.active);
+  return html`<div class="card"><div class="card-head"><h3>Accès en lecture seule</h3>
+      <span class="sub">${active.length ? `${active.length} jeton(s) actif(s)` : "aucun jeton actif"}</span>
+      <div class="actions"><button class="btn sm" data-action="token-new" ${active.length >= t.max_active ? raw("disabled") : ""}>${icon("key-round")}Créer un jeton</button></div></div>
+    <div class="card-body">
+      <p class="small" style="margin:0 0 10px">Un jeton permet à un outil externe (un script, un assistant) de <b>consulter</b> les données : vue d'ensemble, alertes, menaces, vulnérabilités, rapports.
+        Il ne peut <b>rien modifier</b> (lecture uniquement) et n'a jamais accès aux paramètres, aux secrets ni aux comptes. Révocable à tout moment.</p>
+      ${t.items.length ? html`<div class="list">${t.items.map((x) => html`<div class="list-item"><div class="grow">
+          <div class="title">${x.name} <span class="mono tiny muted">${x.prefix}…</span>
+            ${x.active ? html`<span class="badge sev-good">actif</span>` : html`<span class="badge sev-info">${x.revoked_at ? "révoqué" : "expiré"}</span>`}</div>
+          <div class="meta">créé par ${x.created_by} ${fmtAgo(x.created_at)} · expire le ${fmtDate(x.expires_at, false)} ·
+            ${x.last_used_at ? `dernière utilisation ${fmtAgo(x.last_used_at)} depuis ${x.last_used_ip} (${x.use_count} min. d'activité)` : "jamais utilisé"}</div></div>
+          ${x.active ? html`<button class="btn sm ghost danger" data-action="token-revoke" data-id="${x.id}" data-name="${x.name}">${icon("ban")}Révoquer</button>` : ""}</div>`)}</div>` : ""}
+    </div></div>`;
+}
+App.actions["token-new"] = () => {
+  openOverlay({
+    kind: "modal", title: "Nouveau jeton de lecture",
+    body: html`<div class="field"><label>Nom</label><input class="input" id="tk-name" placeholder="Claude, script de supervision…" maxlength="40"></div>
+      <div class="field"><label>Durée de validité</label><select class="input" id="tk-days">
+        <option value="7">7 jours</option><option value="30" selected>30 jours</option><option value="90">90 jours</option><option value="365">1 an</option></select></div>
+      <p class="small muted">Lecture seule : il ne pourra ni modifier un paramètre, ni traiter une alerte, ni lancer un scan.</p>`,
+    foot: html`<button class="btn" data-action="close">Annuler</button><button class="btn primary" data-action="token-create">Créer</button>`,
+  });
+};
+App.actions["token-create"] = async () => {
+  try {
+    const r = await POST("/api/tokens", { name: $("#tk-name").value.trim(), days: Number($("#tk-days").value) });
+    openOverlay({
+      kind: "modal", title: "Jeton créé",
+      body: html`<div class="callout warn">${icon("triangle-alert")}<div>Copiez-le maintenant : il ne sera plus jamais affiché. Ne le collez pas dans une conversation : placez-le dans une variable d'environnement.</div></div>
+        <div class="field mt"><label>Jeton</label><textarea class="input mono" rows="2" readonly id="ingest-env" style="resize:none">${r.token}</textarea>
+          <span class="hint">Utilisation : en-tête <code>Authorization: Bearer &lt;jeton&gt;</code> sur les routes GET de l'API.</span></div>`,
+      foot: html`<button class="btn" data-action="ingest-copy">${icon("copy")}Copier</button><button class="btn primary" data-action="close-reload">Terminé</button>`,
+    });
+  } catch (e) { toast(e.message, "error"); }
+};
+App.actions["token-revoke"] = async (el) => {
+  if (!(await confirmDialog(`Révoquer « ${el.dataset.name} » ?`, "L'outil qui l'utilise perdra immédiatement l'accès.", "Révoquer"))) return;
+  try { await DEL(`/api/tokens/${el.dataset.id}`); toast("Jeton révoqué."); route(); } catch (e) { toast(e.message, "error"); }
+};
 App.actions["ingest-token"] = async (el) => {
   if (el.textContent.includes("Nouveau") && !(await confirmDialog("Générer un nouveau jeton ?", "L'ancien cessera immédiatement de fonctionner : il faudra mettre à jour vos applications.", "Générer"))) return;
   try {
