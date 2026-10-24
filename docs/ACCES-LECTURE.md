@@ -32,12 +32,12 @@ Pas dans une conversation ni dans un fichier du projet : ainsi le jeton n'appara
 
 Windows (PowerShell) :
 ```powershell
-[Environment]::SetEnvironmentVariable("LOGSONAR_URL", "https://monitor.tikipay.org", "User")
+[Environment]::SetEnvironmentVariable("LOGSONAR_URL", "https://logsonar.tikipay.org", "User")
 [Environment]::SetEnvironmentVariable("LOGSONAR_READ_TOKEN", "lsr_...", "User")
 ```
 Linux / macOS (`~/.bashrc` ou `~/.zshrc`) :
 ```bash
-export LOGSONAR_URL=https://monitor.tikipay.org
+export LOGSONAR_URL=https://logsonar.tikipay.org
 export LOGSONAR_READ_TOKEN=lsr_...
 ```
 Puis **redémarrez VS Code / le terminal** pour que Claude Code voie les variables.

@@ -24,7 +24,7 @@ git push --force --all
 ### Prérequis du serveur
 - Linux (Debian, Ubuntu…) avec **Docker** et le plugin **docker compose** (v2.24 ou plus récent).
 - 200 Mo de RAM libres et 1 Go de disque.
-- Un sous-domaine si vous voulez accéder à l'interface en HTTPS (ex. `monitor.tikipay.org`), sinon un tunnel SSH suffit.
+- Un sous-domaine si vous voulez accéder à l'interface en HTTPS (ex. `logsonar.tikipay.org`), sinon un tunnel SSH suffit.
 
 Vérifier :
 ```bash
@@ -86,9 +86,9 @@ Puis ouvrez http://localhost:8081.
 ### Option 2 : sous-domaine HTTPS
 Un exemple Nginx complet est fourni : [`integrations/nginx/logsonar.conf`](../integrations/nginx/logsonar.conf).
 
-1. DNS : un enregistrement `A` `monitor.tikipay.org` → IP du serveur.
+1. DNS : un enregistrement `A` `logsonar.tikipay.org` → IP du serveur.
 2. Copiez le fichier dans la configuration Nginx et remplacez le nom de domaine.
-3. Certificat : `sudo certbot --nginx -d monitor.tikipay.org`
+3. Certificat : `sudo certbot --nginx -d logsonar.tikipay.org`
 4. `sudo nginx -t && sudo systemctl reload nginx`
 
 Le fichier d'exemple bloque `/api/ingest` depuis Internet : le middleware passe par le réseau Docker interne.
@@ -115,7 +115,7 @@ Le fichier d'exemple bloque `/api/ingest` depuis Internet : le middleware passe 
 | **Gravité minimale** | « Élevée et critique » au début, pour éviter le bruit. |
 | **Rapport quotidien** | Laissez activé : résumé chaque matin, rapport complet par email. |
 | **Seuils** | Gardez les valeurs par défaut la première semaine, puis ajustez. |
-| **Certificats TLS** | `tikipay.org, www.tikipay.org, monitor.tikipay.org` |
+| **Certificats TLS** | `tikipay.org, www.tikipay.org, logsonar.tikipay.org` |
 | **Conteneurs surveillés** | Mettez en sourdine les conteneurs sans intérêt (bases de données bavardes…). |
 
 Puis **Rapports → Générer et envoyer** pour vérifier que l'email du rapport arrive bien (avec sa pièce jointe).
