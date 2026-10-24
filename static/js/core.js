@@ -427,6 +427,7 @@ Object.assign(App.actions, {
     route(); // redessine les graphiques avec les couleurs du thème
   },
   logout: async () => {
+    if (!(await confirmDialog("Se déconnecter ?", "Vous devrez saisir à nouveau votre mot de passe et votre code de double authentification.", "Se déconnecter", false))) return;
     try { await POST("/api/auth/logout"); } catch (e) { /* déjà déconnecté */ }
     window.location.replace("/login");
   },
