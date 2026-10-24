@@ -20,7 +20,50 @@ function html(strings, ...vals) {
 }
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
-function setHTML(el, content) { el.innerHTML = content instanceof Raw ? content.s : esc(content); icons(el); }
+function setHTML(el, content) {
+  if (App.soft && el.firstChild) { patchHTML(el, content); return; }
+  el.innerHTML = content instanceof Raw ? content.s : esc(content); icons(el);
+}
+
+// ---------------------------------------------------------------------------
+// Mise à jour sur place : on compare le nouveau rendu à la page affichée et on
+// ne modifie que ce qui a changé. Pas de clignotement, le défilement, la saisie
+// en cours et les graphiques (canvas) sont conservés.
+// ---------------------------------------------------------------------------
+function patchHTML(el, content) {
+  const tmp = document.createElement("div");
+  tmp.innerHTML = content instanceof Raw ? content.s : esc(content);
+  icons(tmp);
+  patchChildren(el, tmp);
+}
+function patchChildren(a, b) {
+  const an = Array.from(a.childNodes), bn = Array.from(b.childNodes);
+  bn.forEach((y, i) => { if (an[i]) patchNode(an[i], y); else a.appendChild(y); });
+  for (let i = an.length - 1; i >= bn.length; i--) an[i].remove();
+}
+function patchNode(x, y) {
+  if (x.nodeType !== y.nodeType || x.nodeName !== y.nodeName || (x.nodeType === 1 && x.id !== y.id)) { x.replaceWith(y); return; }
+  if (x.nodeType !== 1) { if (x.nodeValue !== y.nodeValue) x.nodeValue = y.nodeValue; return; }
+  if (x.nodeName === "CANVAS") return;              // graphique : mis à jour par Chart.js
+  const keepOpen = x.nodeName === "DETAILS";        // un bloc déplié par l'utilisateur le reste
+  for (const { name } of Array.from(x.attributes)) if (!y.hasAttribute(name) && !(keepOpen && name === "open")) x.removeAttribute(name);
+  for (const { name, value } of Array.from(y.attributes)) if (x.getAttribute(name) !== value) x.setAttribute(name, value);
+  patchChildren(x, y);
+  if (x !== document.activeElement) {                // jamais pendant que l'utilisateur tape
+    if (x.nodeName === "INPUT") { if (x.type === "checkbox" || x.type === "radio") x.checked = y.checked; else x.value = y.value; }
+    else if (x.nodeName === "SELECT" || x.nodeName === "TEXTAREA") x.value = y.value;
+  }
+}
+// Exécute un rendu synchrone en mode « mise à jour sur place »
+function softly(fn) { const prev = App.soft; App.soft = true; try { return fn(); } finally { App.soft = prev; } }
+// Gestionnaire d'événement unique : rebrancher après une mise à jour ne le double pas
+function bind(el, type, fn) {
+  if (!el) return;
+  const key = "__ls_" + type;
+  if (el[key]) el.removeEventListener(type, el[key]);
+  el[key] = fn;
+  el.addEventListener(type, fn);
+}
 function icons(root) { if (window.lucide) lucide.createIcons({ root: root || document }); }
 const icon = (name, cls = "") => raw(`<i data-lucide="${esc(name)}" class="${esc(cls)}"></i>`);
 
@@ -172,8 +215,19 @@ function baseOptions({ yMax, yFmt, stacked = false, xTicks = 8 } = {}) {
     },
   };
 }
+// Graphique déjà affiché (mise à jour sur place) : on remplace ses données, sans le recréer
+function updateChart(canvas, labels, series) {
+  const chart = window.Chart && Chart.getChart(canvas);
+  if (!chart || chart.data.datasets.length !== series.length) { if (chart) { chart.destroy(); charts.delete(chart); } return null; }
+  chart.data.labels = labels;
+  series.forEach((s, i) => { chart.data.datasets[i].data = s.data; });
+  chart.update("none");
+  return chart;
+}
 function lineChart(canvas, labels, series, opts = {}) {
   if (!canvas || !window.Chart) return null;
+  const existing = updateChart(canvas, labels, series);
+  if (existing) return existing;
   const chart = new Chart(canvas, {
     type: "line",
     data: {
@@ -191,6 +245,8 @@ function lineChart(canvas, labels, series, opts = {}) {
 }
 function barChart(canvas, labels, series, opts = {}) {
   if (!canvas || !window.Chart) return null;
+  const existing = updateChart(canvas, labels, series);
+  if (existing) return existing;
   const chart = new Chart(canvas, {
     type: "bar",
     data: {
@@ -236,6 +292,7 @@ const App = {
   ws: null,
   wsRetry: 1,
   alertsOpen: 0,
+  soft: false,            // vrai pendant une mise à jour sur place (refresh)
   actions: {},            // data-action -> gestionnaire
   pages: {},
   isAdmin() { return this.me && this.me.role === "admin"; },
@@ -304,7 +361,27 @@ function setHeader(title, sub = "", actions = "") {
 let pageTimers = [];
 function every(ms, fn) { pageTimers.push(setInterval(fn, ms)); }
 
+// Recharge les données de la page affichée et met à jour uniquement ce qui a changé
+let refreshing = null;
+function refresh() {
+  if (refreshing) return refreshing;
+  const page = App.page;
+  const oldTimers = pageTimers;
+  pageTimers = []; App.listeners = {};
+  App.soft = true;
+  refreshing = (async () => {
+    try { await App.pages[page]($("#view")); }
+    catch (e) { console.error(e); }
+    finally {
+      App.soft = false; refreshing = null;
+      oldTimers.forEach(clearInterval);
+    }
+  })();
+  return refreshing;
+}
+
 async function route() {
+  if (refreshing) { try { await refreshing; } catch (e) { /* ignoré */ } }
   const name = (location.hash.replace(/^#\/?/, "").split("?")[0] || "overview");
   const page = App.pages[name] ? name : "overview";
   pageTimers.forEach(clearInterval); pageTimers = [];

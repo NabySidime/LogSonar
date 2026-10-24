@@ -139,7 +139,7 @@ App.actions["token-create"] = async () => {
 };
 App.actions["token-revoke"] = async (el) => {
   if (!(await confirmDialog(`Révoquer « ${el.dataset.name} » ?`, "L'outil qui l'utilise perdra immédiatement l'accès.", "Révoquer"))) return;
-  try { await DEL(`/api/tokens/${el.dataset.id}`); toast("Jeton révoqué."); route(); } catch (e) { toast(e.message, "error"); }
+  try { await DEL(`/api/tokens/${el.dataset.id}`); toast("Jeton révoqué."); refresh(); } catch (e) { toast(e.message, "error"); }
 };
 App.actions["ingest-token"] = async (el) => {
   if (el.textContent.includes("Nouveau") && !(await confirmDialog("Générer un nouveau jeton ?", "L'ancien cessera immédiatement de fonctionner : il faudra mettre à jour vos applications.", "Générer"))) return;
@@ -161,10 +161,10 @@ App.actions["ingest-copy"] = async () => {
   const ta = $("#ingest-env");
   try { await navigator.clipboard.writeText(ta.value); toast("Copié."); } catch { ta.select(); toast("Sélectionné : copiez avec Ctrl+C."); }
 };
-App.actions["close-reload"] = () => { closeOverlay(); route(); };
+App.actions["close-reload"] = () => { closeOverlay(); refresh(); };
 App.actions["ingest-revoke"] = async () => {
   if (!(await confirmDialog("Révoquer le jeton ?", "Les applications connectées ne pourront plus envoyer de requêtes à analyser.", "Révoquer"))) return;
-  try { await DEL("/api/settings/ingest/token"); toast("Jeton révoqué."); route(); } catch (e) { toast(e.message, "error"); }
+  try { await DEL("/api/settings/ingest/token"); toast("Jeton révoqué."); refresh(); } catch (e) { toast(e.message, "error"); }
 };
 
 App.actions["settings-save"] = async () => {
@@ -177,13 +177,13 @@ App.actions["settings-save"] = async () => {
     else if (el.dataset.num) out[k] = Number(el.value);
     else out[k] = el.value.trim();
   });
-  try { await PUT("/api/settings", out); toast("Paramètres enregistrés."); route(); }
+  try { await PUT("/api/settings", out); toast("Paramètres enregistrés."); refresh(); }
   catch (e) { toast(e.message, "error"); }
 };
 App.actions["secret-clear"] = async (el) => {
   if (!(await confirmDialog("Supprimer ce secret ?", "Le canal correspondant sera désactivé.", "Supprimer"))) return;
   await PUT("/api/settings", { [el.dataset.k]: "" });
-  toast("Secret supprimé."); route();
+  toast("Secret supprimé."); refresh();
 };
 App.actions["test-channel"] = async (el, ev) => {
   ev.stopPropagation();
@@ -212,7 +212,7 @@ function accountCard() {
 function bindAccount() {
   const form = $("#pw-form");
   if (!form) return;
-  form.addEventListener("submit", async (e) => {
+  bind(form, "submit", async (e) => {
     e.preventDefault();
     try { await POST("/api/auth/password", { current_password: $("#pw-cur").value, new_password: $("#pw-new").value }); toast("Mot de passe modifié."); form.reset(); }
     catch (err) { toast(err.message, "error"); }
@@ -251,7 +251,7 @@ App.actions["user-new"] = () => {
 App.actions["user-create"] = async () => {
   try {
     await POST("/api/users", { username: $("#u-name").value.trim(), email: $("#u-email").value.trim(), password: $("#u-pass").value, role: $("#u-role").value });
-    closeOverlay(); toast("Utilisateur créé."); route();
+    closeOverlay(); toast("Utilisateur créé."); refresh();
   } catch (e) { toast(e.message, "error"); }
 };
 App.actions["user-edit"] = (el) => {
@@ -271,11 +271,11 @@ App.actions["user-save"] = async (el) => {
   const body = { email: $("#ue-email").value.trim(), reset_2fa: $("#ue-2fa").checked };
   if (!$("#ue-role").disabled) body.role = $("#ue-role").value;
   if ($("#ue-pass").value) body.password = $("#ue-pass").value;
-  try { await PATCH(`/api/users/${el.dataset.id}`, body); closeOverlay(); toast("Utilisateur modifié."); route(); }
+  try { await PATCH(`/api/users/${el.dataset.id}`, body); closeOverlay(); toast("Utilisateur modifié."); refresh(); }
   catch (e) { toast(e.message, "error"); }
 };
 App.actions["user-delete"] = async (el) => {
   if (!(await confirmDialog("Supprimer cet utilisateur ?", "Ses sessions seront immédiatement coupées.", "Supprimer"))) return;
-  try { await DEL(`/api/users/${el.dataset.id}`); toast("Utilisateur supprimé."); route(); }
+  try { await DEL(`/api/users/${el.dataset.id}`); toast("Utilisateur supprimé."); refresh(); }
   catch (e) { toast(e.message, "error"); }
 };

@@ -61,11 +61,11 @@ App.pages.threats = async (view) => {
   };
   let debounce;
   const changed = () => { clearTimeout(debounce); debounce = setTimeout(() => { f.offset = 0; load(); }, 300); };
-  $("#ev-q").addEventListener("input", (e) => { f.q = e.target.value; changed(); });
-  $("#ev-ip").addEventListener("input", (e) => { f.ip = e.target.value.trim(); changed(); });
-  $("#ev-type").addEventListener("change", (e) => { f.attack_type = e.target.value; changed(); });
-  $("#ev-sev").addEventListener("change", (e) => { f.severity = e.target.value; changed(); });
-  $("#ev-reset").addEventListener("click", () => { location.hash = `#/threats?days=${f.days}`; });
+  bind($("#ev-q"), "input", (e) => { f.q = e.target.value; changed(); });
+  bind($("#ev-ip"), "input", (e) => { f.ip = e.target.value.trim(); changed(); });
+  bind($("#ev-type"), "change", (e) => { f.attack_type = e.target.value; changed(); });
+  bind($("#ev-sev"), "change", (e) => { f.severity = e.target.value; changed(); });
+  bind($("#ev-reset"), "click", () => { location.hash = `#/threats?days=${f.days}`; });
   App.actions["ev-page"] = (el) => { f.offset = Math.max(0, f.offset + Number(el.dataset.d)); load(); };
   App.actions["event-open"] = (el) => openEvent(rows[Number(el.dataset.i)]);
   App.actions["threats-filter"] = (el) => {
@@ -120,7 +120,7 @@ App.pages.vulns = async (view) => {
   on("scan", (st) => {
     $("#scan-progress").classList.toggle("hidden", !st.running);
     if (st.running) { $("#scan-stage").textContent = st.stage; $("#scan-bar").style.width = st.progress + "%"; }
-    else { toast("Scan de sécurité terminé."); route(); }
+    else { toast("Scan de sécurité terminé."); refresh(); }
   });
   if (!scan) return;
   const el = $("#vtab");
@@ -131,7 +131,7 @@ App.pages.vulns = async (view) => {
 };
 App.actions["vulns-tab"] = (el) => { location.hash = `#/vulns?tab=${el.dataset.tab}`; };
 App.actions["scan-start"] = async () => {
-  try { await POST("/api/vulns/scan"); toast("Scan lancé : cela prend en général une à trois minutes."); route(); }
+  try { await POST("/api/vulns/scan"); toast("Scan lancé : cela prend en général une à trois minutes."); refresh(); }
   catch (e) { toast(e.message, "error"); }
 };
 
@@ -168,10 +168,10 @@ async function vulnsTab(el, s, top) {
   };
   let deb;
   const changed = () => { clearTimeout(deb); deb = setTimeout(() => { f.offset = 0; load(); }, 300); };
-  $("#vf-q").addEventListener("input", (e) => { f.q = e.target.value; changed(); });
-  $("#vf-target").addEventListener("change", (e) => { f.target = e.target.value; changed(); });
-  $("#vf-sev").addEventListener("change", (e) => { f.severity = e.target.value; changed(); });
-  $("#vf-fix").addEventListener("change", (e) => { f.fixable = e.target.checked; changed(); });
+  bind($("#vf-q"), "input", (e) => { f.q = e.target.value; changed(); });
+  bind($("#vf-target"), "change", (e) => { f.target = e.target.value; changed(); });
+  bind($("#vf-sev"), "change", (e) => { f.severity = e.target.value; changed(); });
+  bind($("#vf-fix"), "change", (e) => { f.fixable = e.target.checked; changed(); });
   App.actions["vf-page"] = (b) => { f.offset = Math.max(0, f.offset + Number(b.dataset.d)); load(); };
   App.actions["vuln-open"] = (b) => {
     const x = rows[Number(b.dataset.i)];
@@ -231,7 +231,7 @@ async function tlsTab(el) {
       <td class="small">${t.expires ? fmtDate(t.expires, false) : "—"}</td><td class="small">${t.issuer || "—"}</td><td class="small muted">${fmtAgo(t.checked_ts)}</td></tr>`)}</tbody></table></div>` :
     empty("Aucun domaine surveillé", "Ajoutez vos domaines dans Paramètres pour être prévenu avant l'expiration de leurs certificats.", "lock")}</div></div>`);
 }
-App.actions["tls-check"] = async () => { await POST("/api/vulns/tls/check"); toast("Certificats vérifiés."); route(); };
+App.actions["tls-check"] = async () => { await POST("/api/vulns/tls/check"); toast("Certificats vérifiés."); refresh(); };
 
 // ===========================================================================
 // ALERTES
@@ -251,7 +251,7 @@ App.pages.alerts = async (view) => {
         <td class="small">${CAT[a.category] || a.category}</td><td class="right num">${fmtNum(a.count)}</td><td class="small muted nowrap">${fmtAgo(a.last_ts)}</td>
         <td class="small">${STATUS_LABEL[a.status]}</td></tr>`)}</tbody></table></div>` :
       empty(status === "active" ? "Aucune alerte en cours" : "Aucune alerte", status === "active" ? "Tout fonctionne normalement." : "", "circle-check")}</div>`);
-  on("alert", () => { if (!$("[data-overlay]")) route(); });
+  on("alert", () => refresh());
 };
 App.actions["alerts-tab"] = (el) => { location.hash = `#/alerts?status=${el.dataset.status}`; };
 App.actions["alert-open"] = async (el) => {
@@ -277,7 +277,7 @@ App.actions["alert-set"] = async (el) => {
   closeOverlay();
   toast(el.dataset.status === "resolved" ? "Alerte résolue." : "Alerte prise en compte.");
   refreshAlertCount();
-  route();
+  refresh();
 };
 
 // ===========================================================================
@@ -305,11 +305,11 @@ App.pages.reports = async (view) => {
 App.actions["report-gen"] = async (el) => {
   const send = el.dataset.send === "1";
   el.disabled = true;
-  try { const r = await POST(`/api/reports/generate?date=${$("#rp-date").value}${send ? "&send=true" : ""}`); toast(send ? "Rapport généré et envoyé." : "Rapport généré."); route(); window.open(`/api/reports/${r.filename}`, "_blank", "noopener"); }
+  try { const r = await POST(`/api/reports/generate?date=${$("#rp-date").value}${send ? "&send=true" : ""}`); toast(send ? "Rapport généré et envoyé." : "Rapport généré."); refresh(); window.open(`/api/reports/${r.filename}`, "_blank", "noopener"); }
   catch (e) { toast(e.message, "error"); el.disabled = false; }
 };
 App.actions["report-del"] = async (el) => {
   if (!(await confirmDialog("Supprimer ce rapport ?", "Cette action est définitive.", "Supprimer"))) return;
   await DEL(`/api/reports/${encodeURIComponent(el.dataset.f)}`);
-  toast("Rapport supprimé."); route();
+  toast("Rapport supprimé."); refresh();
 };

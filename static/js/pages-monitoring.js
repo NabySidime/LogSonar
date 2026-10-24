@@ -109,8 +109,8 @@ App.pages.overview = async (view) => {
     </div>`);
 
   lineChart($("#ch-traffic"), minuteLabels(t.series), [{ label: "Requêtes", data: t.series.map((p) => p.requests), color: "--series-1", fill: true }]);
-  on("host", (h) => setHTML($("#gauges"), hostGauges(h)));
-  every(60000, () => { if (App.page === "overview") route(); });
+  on("host", (h) => patchHTML($("#gauges"), hostGauges(h)));
+  every(60000, refresh);
 };
 
 // ===========================================================================
@@ -195,7 +195,7 @@ App.pages.server = async (view) => {
   // Le % CPU d'un processus se calcule entre deux mesures : on en prend deux
   await loadProcs(); setTimeout(loadProcs, 2500);
   every(15000, loadProcs);
-  on("host", (x) => setHTML($("#gauges"), hostGauges(x)));
+  on("host", (x) => patchHTML($("#gauges"), hostGauges(x)));
 };
 App.actions["server-range"] = (el) => { location.hash = `#/server?range=${el.dataset.range}`; };
 
@@ -237,7 +237,7 @@ App.pages.containers = async (view) => {
         html`<div class="card">${empty("Aucun conteneur", "LogSonar n'a trouvé aucun conteneur à surveiller.", "box")}</div>`}`);
   };
   render();
-  on("containers", (cs) => { d = { ...d, containers: cs, connected: true }; if (!$("[data-overlay]")) render(); });
+  on("containers", (cs) => { d = { ...d, containers: cs, connected: true }; softly(render); });
 };
 App.actions["container-open"] = async (el) => {
   const name = el.dataset.name;
@@ -286,7 +286,6 @@ App.pages.traffic = async (view) => {
     const attacks = t.series.reduce((s, p) => s + p.attacks, 0);
     const peak = Math.max(0, ...t.series.map((p) => p.requests));
     const statuses = Object.entries(t.statuses).sort();
-    destroyCharts();
     setHTML(view, html`
       <div class="grid g-4">
         <div class="card kpi"><div class="label">${icon("arrow-down-up")}Requêtes (1 h)</div><div class="value">${fmtNum(total)}</div><div class="foot">${fmtNum(total / 60)} / min en moyenne</div></div>
@@ -313,7 +312,7 @@ App.pages.traffic = async (view) => {
     barChart($("#ch-att"), labels, [{ label: "Attaques", data: t.series.map((p) => p.attacks), color: "--series-2" }]);
   };
   await draw();
-  every(30000, () => { if (App.page === "traffic") draw(); });
+  every(30000, refresh);
 };
 
 // ===========================================================================
@@ -364,11 +363,11 @@ App.pages.logs = async (view) => {
     batch.forEach(add);
     $("#lg-stats").textContent = `${fmtNum(state.count)} lignes · ${fmtNum(state.attacks)} attaques`;
   });
-  $("#lg-container").addEventListener("change", (e) => { state.container = e.target.value; });
-  $("#lg-q").addEventListener("input", (e) => { state.q = e.target.value.toLowerCase(); });
-  $("#lg-att").addEventListener("change", (e) => { state.attacksOnly = e.target.checked; });
-  $("#lg-clear").addEventListener("click", () => { term.innerHTML = ""; });
-  $("#lg-pause").addEventListener("click", (e) => {
+  bind($("#lg-container"), "change", (e) => { state.container = e.target.value; });
+  bind($("#lg-q"), "input", (e) => { state.q = e.target.value.toLowerCase(); });
+  bind($("#lg-att"), "change", (e) => { state.attacksOnly = e.target.checked; });
+  bind($("#lg-clear"), "click", () => { term.innerHTML = ""; });
+  bind($("#lg-pause"), "click", (e) => {
     state.paused = !state.paused;
     setHTML(e.currentTarget, html`${icon(state.paused ? "play" : "pause")}${state.paused ? "Reprendre" : "Pause"}`);
   });
