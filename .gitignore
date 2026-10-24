@@ -51,3 +51,6 @@ Desktop.ini
 .env
 .env.local
 .env.*.local
+
+# Sauvegardes (scripts/backup.sh)
+backups/

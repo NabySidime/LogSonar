@@ -1,0 +1,34 @@
+# Exemple : ce qu'il faut ajouter au docker-compose.yml de VOTRE application
+# (Tikipay, billetair...) pour que LogSonar la surveille au mieux.
+# Ce fichier n'est pas à lancer tel quel : reportez les lignes marquées « LogSonar ».
+
+services:
+  web:
+    image: tikipay-web
+    # Gunicorn : activez les logs d'accès, sinon le trafic n'est pas visible
+    command: gunicorn tikipay.wsgi --bind 0.0.0.0:8000 --access-logfile -        # LogSonar
+    environment:
+      # Analyse des requêtes POST (middleware integrations/django/logsonar_middleware.py)
+      LOGSONAR_URL: http://logsonar:8000                                          # LogSonar
+      LOGSONAR_TOKEN: ${LOGSONAR_TOKEN}                                           # LogSonar (dans le .env de l'application)
+      LOGSONAR_SOURCE: tikipay                                                    # LogSonar
+    # Un healthcheck permet à LogSonar d'alerter si l'application ne répond plus
+    healthcheck:                                                                  # LogSonar
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    # Limite mémoire : LogSonar signale les arrêts pour manque de mémoire (OOM)
+    mem_limit: 1g                                                                 # LogSonar
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    # Ne PAS publier le port de la base (« ports: - 5432:5432 ») : LogSonar le signale
+    # comme critique. Les autres conteneurs y accèdent par le réseau Docker.
+    # Logs de la base trop bavards ? Mettez-la en sourdine dans Paramètres : ses
+    # ressources et ses failles restent surveillées. (Le label logsonar.enable=false,
+    # lui, exclut totalement le conteneur, y compris du scan de vulnérabilités.)
+
+# LogSonar rejoint ce réseau avec docker-compose.proxy.yml et PROXY_NETWORK=tikipay_default
+# (le nom du réseau est visible avec : docker network ls)

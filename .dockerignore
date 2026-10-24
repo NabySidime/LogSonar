@@ -1,0 +1,12 @@
+.git
+.env
+.env.*
+data/
+env/
+venv/
+.venv/
+tests/
+**/__pycache__
+*.pyc
+README.md
+docker-compose*.yml

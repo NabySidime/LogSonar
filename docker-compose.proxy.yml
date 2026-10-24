@@ -1,0 +1,18 @@
+# Variante : brancher LogSonar sur le réseau de votre reverse proxy existant
+# (Nginx, Traefik, Caddy...) au lieu de publier un port.
+#
+#   PROXY_NETWORK=monprojet_default    (dans .env)
+#   docker compose -f docker-compose.yml -f docker-compose.proxy.yml up -d --build
+#
+# Puis dans votre reverse proxy : proxy_pass http://logsonar:8000;
+# et dans .env : LOGSONAR_TRUSTED_PROXIES=<sous-réseau du réseau proxy, ex. 172.18.0.0/16>
+
+services:
+  logsonar:
+    ports: !reset []
+    networks: [logsonar-internal, proxy]
+
+networks:
+  proxy:
+    external: true
+    name: ${PROXY_NETWORK:?Définissez PROXY_NETWORK dans .env}

@@ -1,16 +1,65 @@
-version: '3.8'
+# LogSonar — déploiement standard
+#   cp .env.example .env      (puis adaptez)
+#   docker compose up -d --build
+#   docker compose logs logsonar   -> code d'installation au premier démarrage
+#
+# L'interface écoute sur 127.0.0.1:8081 : exposez-la via votre reverse proxy
+# (voir docker-compose.proxy.yml et le README), jamais directement sur Internet.
 
 services:
-  logsonar:
-    build: .
-    container_name: logsonar-app
-    ports:
-      - "8081:80"
+  # Accès à l'API Docker en LECTURE SEULE : LogSonar ne peut ni créer, ni
+  # arrêter, ni exécuter quoi que ce soit, même s'il était compromis.
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy:v0.4.2
+    container_name: logsonar-socket-proxy
+    restart: unless-stopped
     environment:
-      - DOCKER_HOST=tcp://host.docker.internal:2375
+      CONTAINERS: 1   # liste, inspection, logs, stats, lecture de fichiers (scan)
+      IMAGES: 1       # occupation disque des images
+      INFO: 1
+      EVENTS: 1       # crash, OOM, healthcheck
+      SYSTEM: 1       # docker system df
+      POST: 0         # aucune écriture
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./static:/app/static
-      - ./app:/app
-      - ./data:/app/data
+    networks: [logsonar-internal]
+    read_only: true
+    tmpfs: [/run, /tmp, /var/lib/haproxy]
+    security_opt: ["no-new-privileges:true"]
+    labels:
+      logsonar.role: socket-proxy
+
+  logsonar:
+    build: .
+    image: logsonar:2
+    container_name: logsonar
     restart: unless-stopped
+    depends_on: [socket-proxy]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      LOGSONAR_DOCKER_URL: tcp://socket-proxy:2375
+      TZ: ${TZ:-Europe/Paris}
+    ports:
+      - "127.0.0.1:${LOGSONAR_PORT:-8081}:8000"
+    volumes:
+      - logsonar-data:/app/data
+      # Métriques et audit du serveur hôte, en lecture seule
+      - /proc:/host/proc:ro
+      - /:/hostfs:ro
+    networks: [logsonar-internal, default]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    labels:
+      logsonar.role: app
+
+networks:
+  logsonar-internal:
+    internal: true
+
+volumes:
+  logsonar-data:
