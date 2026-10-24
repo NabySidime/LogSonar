@@ -97,22 +97,28 @@ def list_containers(all_: bool = False) -> list[dict]:
     raw = state.client().api.containers(all=all_)
     out = []
     for c in raw:
-        if is_ignored(c):
-            continue
-        out.append({
-            "id": c["Id"],
-            "name": container_name(c),
-            "image": c.get("Image", ""),
-            "state": c.get("State", ""),
-            "status": c.get("Status", ""),
-            "created": c.get("Created", 0),
-            "ports": [
-                {"ip": p.get("IP", ""), "public": p.get("PublicPort"), "private": p.get("PrivatePort"), "type": p.get("Type")}
-                for p in c.get("Ports", [])
-            ],
-            "labels": c.get("Labels") or {},
-            "compose_project": (c.get("Labels") or {}).get("com.docker.compose.project", ""),
-        })
+        # Un conteneur aux données inattendues est ignoré : il ne doit pas faire
+        # échouer toute la liste (LogSonar croirait Docker inaccessible).
+        try:
+            if is_ignored(c):
+                continue
+            out.append({
+                "id": c["Id"],
+                "name": container_name(c),
+                "image": c.get("Image") or "",
+                "state": c.get("State") or "",
+                "status": c.get("Status") or "",
+                "created": c.get("Created") or 0,
+                # Docker renvoie "Ports": null pour un conteneur sans port publié
+                "ports": [
+                    {"ip": p.get("IP", ""), "public": p.get("PublicPort"), "private": p.get("PrivatePort"), "type": p.get("Type")}
+                    for p in (c.get("Ports") or [])
+                ],
+                "labels": c.get("Labels") or {},
+                "compose_project": (c.get("Labels") or {}).get("com.docker.compose.project", ""),
+            })
+        except Exception as e:
+            print(f"LogSonar: conteneur ignoré ({(c.get('Id') or '?')[:12]}) : {type(e).__name__}: {e}")
     return out
 
 
@@ -134,11 +140,11 @@ class LogReader(threading.Thread):
         self.since = since
         self.on_lines = on_lines
         self._stream = None
-        self._stop = threading.Event()
+        self._halt = threading.Event()  # pas "_stop" : Thread a déjà une méthode _stop
         self.last_seen = time.time()
 
     def stop(self) -> None:
-        self._stop.set()
+        self._halt.set()
         stream = self._stream
         if stream is not None:
             try:
@@ -156,7 +162,7 @@ class LogReader(threading.Thread):
             )
             replay_until = time.time() + 2 if replay else 0
             for chunk in self._stream:
-                if self._stop.is_set():
+                if self._halt.is_set():
                     break
                 self.last_seen = time.time()
                 buffer += chunk.decode("utf-8", errors="replace")
@@ -172,7 +178,7 @@ class LogReader(threading.Thread):
         except NotFound:
             pass
         except Exception as e:
-            if not self._stop.is_set():
+            if not self._halt.is_set():
                 print(f"LogSonar: flux de logs interrompu pour {self.cname} ({type(e).__name__})")
         finally:
             if buffer.strip():
@@ -228,11 +234,11 @@ class EventWatcher(threading.Thread):
     def __init__(self, on_event: Callable[[dict], None]) -> None:
         super().__init__(name="docker-events", daemon=True)
         self.on_event = on_event
-        self._stop = threading.Event()
+        self._halt = threading.Event()  # pas "_stop" : Thread a déjà une méthode _stop
         self._stream = None
 
     def stop(self) -> None:
-        self._stop.set()
+        self._halt.set()
         if self._stream is not None:
             try:
                 self._stream.close()
@@ -241,21 +247,21 @@ class EventWatcher(threading.Thread):
 
     def run(self) -> None:
         delay = 1
-        while not self._stop.is_set():
+        while not self._halt.is_set():
             try:
                 self._stream = state.client().api.events(
                     decode=True, filters={"type": "container"}, since=int(time.time()),
                 )
                 delay = 1
                 for ev in self._stream:
-                    if self._stop.is_set():
+                    if self._halt.is_set():
                         break
                     self.on_event(ev)
             except Exception as e:
-                if self._stop.is_set():
+                if self._halt.is_set():
                     break
                 print(f"LogSonar: flux d'événements Docker interrompu ({type(e).__name__}), reprise dans {delay}s")
-            self._stop.wait(delay)
+            self._halt.wait(delay)
             delay = min(delay * 2, 30)
 
 
