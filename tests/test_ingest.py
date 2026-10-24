@@ -71,3 +71,14 @@ def test_url_attack_also_detected():
 def test_flatten_body():
     assert flatten_body({"a": {"b": [1, {"c": "x"}]}, "d": None}) == [("a.b[0]", "1"), ("a.b[1].c", "x")]
     assert flatten_body("brut") == [("", "brut")]
+
+
+@pytest.mark.parametrize("key,sensitive", [
+    ("password", True), ("new_password1", True), ("user.pass", True), ("passphrase", True), ("pwd", True),
+    ("csrfmiddlewaretoken", True), ("refresh_token", True), ("otp", True), ("card_number", True), ("auth", True),
+    ("passenger.first_name", False), ("passport_number", False), ("author", False), ("company", False),
+    ("spinner", False), ("email", False),
+])
+def test_sensitive_field_names(key, sensitive):
+    from app.detection.engine import SENSITIVE_FIELD_RE
+    assert bool(SENSITIVE_FIELD_RE.search(key)) is sensitive

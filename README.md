@@ -81,6 +81,7 @@ Les logs d'accès ne contiennent que l'URL : une injection SQL tapée dans un fo
    LOGSONAR_URL=http://logsonar:8000
    LOGSONAR_TOKEN=lsi_...
    LOGSONAR_SOURCE=tikipay
+   LOGSONAR_EXCLUDE_PATHS=/payments/callback/,/admin/   # facultatif : webhooks signés, admin avec HTML
    ```
 4. L'application doit joindre LogSonar sur le réseau Docker : utilisez `docker-compose.proxy.yml` avec `PROXY_NETWORK` = le réseau de votre application.
 

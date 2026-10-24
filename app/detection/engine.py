@@ -230,7 +230,8 @@ def is_success(status: str) -> bool:
 # ---------------------------------------------------------------------------
 # Champs dont la valeur n'est jamais conservée : seule la présence d'une attaque est notée.
 SENSITIVE_FIELD_RE = re.compile(
-    r"pass|pwd|secret|token|api[_-]?key|auth|session|csrf|card|cvv|cvc|iban|ccnum|(?<![a-z])(?:otp|pin|pan)(?![a-z])",
+    r"passw|passphrase|pwd|secret|token|api[_-]?key|authorization|session|csrf|card|cvv|cvc|iban|ccnum"
+    r"|(?<![a-z])(?:pass|auth|otp|pin|pan)(?![a-z])",
     re.IGNORECASE)
 MAX_BODY_FIELDS = 500
 MAX_BODY_CHARS = 32768

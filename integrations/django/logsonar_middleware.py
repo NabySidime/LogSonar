@@ -25,7 +25,12 @@ Installation
        LOGSONAR_URL=http://logsonar:8000      # adresse de LogSonar sur le réseau Docker
        LOGSONAR_TOKEN=lsi_...                  # Paramètres > Analyse des requêtes POST
        LOGSONAR_SOURCE=tikipay                 # nom affiché dans LogSonar (facultatif)
+       LOGSONAR_EXCLUDE_PATHS=/admin/,/webhook/ # préfixes d'URL non transmis (facultatif)
 Sans LOGSONAR_URL ou LOGSONAR_TOKEN, le middleware ne fait rien.
+
+Que exclure ? Les webhooks signés de prestataires (paiement...) et les espaces
+d'administration où l'on saisit du HTML (articles, emails) : ce contenu légitime
+ressemblerait à du XSS.
 """
 from __future__ import annotations
 
@@ -40,6 +45,7 @@ import urllib.request
 LOGSONAR_URL = os.environ.get("LOGSONAR_URL", "").rstrip("/")
 LOGSONAR_TOKEN = os.environ.get("LOGSONAR_TOKEN", "")
 LOGSONAR_SOURCE = os.environ.get("LOGSONAR_SOURCE", "django")
+EXCLUDE_PATHS = tuple(p.strip() for p in os.environ.get("LOGSONAR_EXCLUDE_PATHS", "").split(",") if p.strip())
 
 METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 MAX_BODY = 64 * 1024          # au-delà, le corps n'est pas lu (gros envois, fichiers)
@@ -48,7 +54,7 @@ BATCH_SIZE = 100
 FLUSH_SECONDS = 2.0
 
 # Données bancaires : jamais transmises, même à LogSonar (PCI DSS)
-_NEVER_SEND = re.compile(r"card|cvv|cvc|cvn|iban|bic|ccnum|expir|exp_?(?:month|year)|(?<![a-z])pan(?![a-z])", re.I)
+_NEVER_SEND = re.compile(r"card|cvv|cvc|cvn|iban|ccnum|exp_?(?:month|year)|(?<![a-z])(?:pan|bic|expiry)(?![a-z])", re.I)
 
 _queue: "queue.Queue[dict]" = queue.Queue(maxsize=5000)
 _worker_pid: int | None = None
@@ -140,7 +146,7 @@ class LogSonarMiddleware:
         self.enabled = bool(LOGSONAR_URL and LOGSONAR_TOKEN)
 
     def __call__(self, request):
-        if not self.enabled or request.method not in METHODS:
+        if not self.enabled or request.method not in METHODS or request.path.startswith(EXCLUDE_PATHS):
             return self.get_response(request)
         ctype = (request.META.get("CONTENT_TYPE") or "").lower()
         body = None

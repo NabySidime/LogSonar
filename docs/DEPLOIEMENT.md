@@ -126,6 +126,8 @@ Puis **Rapports → Générer et envoyer** pour vérifier que l'email du rapport
 
 Nécessite le **mode B** de l'étape 1 (LogSonar sur le réseau de Tikipay).
 
+> **Déjà fait dans Tikipay et billetair** : le middleware est installé (`backend/logsonar_middleware.py` pour Tikipay, `backend/config/logsonar_middleware.py` pour billetair), ajouté à `MIDDLEWARE`, et les variables sont dans leur docker-compose. Il ne reste qu'à **ajouter le jeton** (étape 1 ci-dessous, puis `LOGSONAR_TOKEN=lsi_...` dans `backend/.env.production` pour Tikipay, `backend/.env` pour billetair) et redéployer. Sans jeton, le middleware reste inactif.
+
 1. **Paramètres → Analyse des requêtes POST → Activer** : copiez les 3 lignes affichées (le jeton n'est montré qu'une fois).
 2. Copiez [`integrations/django/logsonar_middleware.py`](../integrations/django/logsonar_middleware.py) dans le projet Tikipay, par exemple `tikipay/logsonar_middleware.py`.
 3. Dans `settings.py`, ajoutez-le **à la fin** :
@@ -141,6 +143,8 @@ Nécessite le **mode B** de l'étape 1 (LogSonar sur le réseau de Tikipay).
      LOGSONAR_URL: http://logsonar:8000
      LOGSONAR_TOKEN: ${LOGSONAR_TOKEN}      # le jeton, dans le .env de Tikipay
      LOGSONAR_SOURCE: tikipay
+     # URL non transmises : webhooks signés de prestataires, espaces d'admin où l'on saisit du HTML
+     LOGSONAR_EXCLUDE_PATHS: /payments/callback/,/admin-panel/,/admin/
    ```
 5. Redéployez Tikipay.
 
