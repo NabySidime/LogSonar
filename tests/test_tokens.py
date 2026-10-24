@@ -52,6 +52,7 @@ def test_reading_is_allowed(client, path):
 @pytest.mark.parametrize("method,path", [
     ("POST", "/api/alerts/1/status"),       # traiter une alerte
     ("POST", "/api/vulns/scan"),            # lancer un scan
+    ("POST", "/api/vulns/config/accept"),   # accepter un risque de configuration
     ("POST", "/api/containers/mute"),       # mettre un conteneur en sourdine
     ("PUT", "/api/settings"),               # modifier les paramètres
     ("POST", "/api/settings/test/email"),   # envoyer une notification

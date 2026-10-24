@@ -17,7 +17,7 @@ from ..detection.signatures import EXPLANATIONS
 from ..monitor import monitor
 from ..security import current_user, require_admin
 from ..traffic import traffic
-from ..vuln.scanner import latest_scan, scan_state
+from ..vuln.scanner import config_counts, latest_scan, scan_state
 
 router = APIRouter(prefix="/api", tags=["monitoring"])
 
@@ -35,8 +35,7 @@ async def overview(_: dict = Depends(current_user)):
     open_alerts = alerts.open_alerts()
     cfg_counts = None
     if scan:
-        rows = await db.fetchall("SELECT severity, COUNT(*) AS n FROM config_findings WHERE scan_id = ? GROUP BY severity", (scan["id"],))
-        cfg_counts = {r["severity"]: r["n"] for r in rows}
+        cfg_counts = await config_counts(scan["id"])
     attacks_today = await db.scalar("SELECT COUNT(*) FROM security_events WHERE ts >= ?", (t0,))
     ips_today = await db.scalar("SELECT COUNT(DISTINCT ip) FROM security_events WHERE ts >= ? AND ip != ''", (t0,))
     top_types = await db.fetchall(

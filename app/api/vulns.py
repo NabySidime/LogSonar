@@ -4,12 +4,14 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from .. import db
+from .. import settings_store as S
 from ..monitor import monitor
 from ..security import current_user, require_admin
 from ..vuln.osv import _natural_key
-from ..vuln.scanner import latest_scan, scan_state, start_scan
+from ..vuln.scanner import accepted_config, config_key, latest_scan, scan_state, start_scan, sync_config_alerts
 
 router = APIRouter(prefix="/api/vulns", tags=["vulnerabilities"])
 
@@ -73,8 +75,32 @@ async def config_findings(_: dict = Depends(current_user)):
     scan = await latest_scan()
     if not scan:
         return []
-    return await db.fetchall(
+    rows = await db.fetchall(
         f"SELECT * FROM config_findings WHERE scan_id = ? ORDER BY {SEV_SQL}, target", (scan["id"],))
+    accepted = accepted_config()
+    for r in rows:
+        r["accepted"] = config_key(r["target"], r["check_id"]) in accepted
+    return rows
+
+
+class AcceptIn(BaseModel):
+    target: str = Field(min_length=1, max_length=200)
+    check_id: str = Field(min_length=1, max_length=100)
+    accepted: bool
+
+
+@router.post("/config/accept")
+async def accept_config(body: AcceptIn, _: dict = Depends(require_admin)):
+    """Accepte un risque de configuration voulu (il ne compte plus dans le score ni en alerte)."""
+    keys = accepted_config()
+    key = config_key(body.target, body.check_id)
+    if body.accepted:
+        keys.add(key)
+    else:
+        keys.discard(key)
+    await S.set_many({"accepted_config": sorted(keys)})
+    await sync_config_alerts()
+    return {"accepted": body.accepted}
 
 
 @router.post("/scan")

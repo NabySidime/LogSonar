@@ -205,13 +205,27 @@ async function configTab(el) {
   if (!items.length) { setHTML(el, html`<div class="card">${empty("Aucun problème de configuration", "", "shield-check")}</div>`); return; }
   const groups = {};
   items.forEach((x) => (groups[x.target] = groups[x.target] || []).push(x));
-  setHTML(el, html`${Object.entries(groups).map(([target, list]) => html`
+  const nAccepted = items.filter((x) => x.accepted).length;
+  setHTML(el, html`${nAccepted ? html`<p class="small muted" style="margin:0 0 12px">${icon("shield-check")} ${nAccepted} risque(s) accepté(s) : ils ne comptent plus dans le score ni dans les alertes.</p>` : ""}
+    ${Object.entries(groups).map(([target, list]) => html`
     <div class="card" style="margin-bottom:12px"><div class="card-head"><h3 class="mono">${target}</h3><span class="sub">${list.length} constat(s)</span></div>
-      <div class="card-body flush"><div class="list">${list.map((x) => html`<div class="list-item">
+      <div class="card-body flush"><div class="list">${list.map((x) => html`<div class="list-item" style="${x.accepted ? "opacity:.6" : ""}">
         <span class="sev-dot ${x.severity === "medium" ? "warning" : x.severity}"></span>
         <div class="grow"><div class="title">${x.title}</div><div class="small text-2" style="margin-top:2px">${x.detail}</div>
-          <div class="small" style="margin-top:6px">${icon("wrench")} ${x.fix}</div></div>${sevBadge(x.severity)}</div>`)}</div></div></div>`)}`);
+          <div class="small" style="margin-top:6px">${icon("wrench")} ${x.fix}</div>
+          ${App.isAdmin() && ["critical", "high", "medium"].includes(x.severity) ? html`<div style="margin-top:8px"><button class="btn sm" data-action="config-accept" data-target="${x.target}" data-check="${x.check_id}" data-accepted="${x.accepted ? "0" : "1"}">${icon(x.accepted ? "rotate-ccw" : "check")}${x.accepted ? "Ne plus accepter" : "Accepter le risque"}</button></div>` : ""}</div>
+        ${x.accepted ? html`<span class="badge sev-good">${icon("check")}Risque accepté</span>` : sevBadge(x.severity)}</div>`)}</div></div></div>`)}`);
 }
+App.actions["config-accept"] = async (el) => {
+  const accepted = el.dataset.accepted === "1";
+  if (accepted && !(await confirmDialog("Accepter ce risque ?",
+    "À faire seulement si ce réglage est voulu (ex. mailcow a besoin d'un conteneur privilégié pour son pare-feu). Il ne comptera plus dans le score ni dans les alertes.", "Accepter"))) return;
+  try {
+    await POST("/api/vulns/config/accept", { target: el.dataset.target, check_id: el.dataset.check, accepted });
+    toast(accepted ? "Risque accepté." : "Le risque compte de nouveau dans le score.");
+    refresh();
+  } catch (e) { toast(e.message, "error"); }
+};
 
 function targetsTab(el, s) {
   setHTML(el, html`<div class="card"><div class="card-body flush"><div class="table-wrap"><table class="table"><thead><tr><th>Cible</th><th>Système</th><th>Sources</th><th class="right">Paquets</th><th>Vulnérabilités</th></tr></thead>

@@ -17,6 +17,13 @@ def test_severity_sources():
     assert severity_of({})[0] == "unknown"
 
 
+def test_ubuntu_priority_wins_over_cvss():
+    # Faille du noyau : CVSS 7.8 (élevée), mais priorité Ubuntu « medium »
+    v = {"severity": [{"type": "CVSS_V3", "score": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"},
+                      {"type": "Ubuntu", "score": "medium"}]}
+    assert severity_of(v, "linux", "Ubuntu:24.04:LTS") == ("medium", 7.8)
+
+
 def test_fixed_version_picks_next_fix():
     vuln = {"affected": [{"package": {"name": "django"}, "ranges": [{"events": [
         {"introduced": "4.2"}, {"fixed": "4.2.16"}, {"introduced": "5.0"}, {"fixed": "5.0.9"}]}]}]}

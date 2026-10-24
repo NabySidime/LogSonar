@@ -50,6 +50,8 @@ DEFAULTS: dict[str, tuple[Any, type]] = {
     "ingest_token": ("", str),                    # secret, généré par LogSonar
     # Conteneurs mis en sourdine (liste JSON)
     "muted_containers": ([], list),
+    # Problèmes de configuration acceptés en connaissance de cause ("cible|check_id")
+    "accepted_config": ([], list),
 }
 
 SECRET_KEYS = {"brevo_api_key", "discord_webhook", "slack_webhook", "telegram_bot_token", "webhook_url", "ingest_token"}

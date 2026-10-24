@@ -10,6 +10,7 @@ import time
 from collections import Counter, defaultdict
 
 from .. import config, db
+from .. import settings_store as S
 from ..alerts import alerts
 from ..collectors import docker_watch as D
 from ..hub import hub
@@ -214,15 +215,51 @@ async def _raise_alerts(summary: dict) -> None:
     else:
         await alerts.resolve("vuln:critical")
 
+    await sync_config_alerts()
+
+
+# ---------------------------------------------------------------------------
+# Problèmes de configuration acceptés (ex. conteneur privilégié voulu par mailcow)
+# ---------------------------------------------------------------------------
+def config_key(target: str, check_id: str) -> str:
+    return f"{target}|{check_id}"
+
+
+def accepted_config() -> set[str]:
+    return set(S.get("accepted_config"))
+
+
+async def config_counts(scan_id: int) -> dict:
+    """Constats par gravité, hors risques acceptés (pour le score)."""
+    accepted = accepted_config()
+    out: Counter = Counter()
+    for r in await db.fetchall("SELECT target, check_id, severity FROM config_findings WHERE scan_id = ?", (scan_id,)):
+        if config_key(r["target"], r["check_id"]) not in accepted:
+            out[r["severity"]] += 1
+    return dict(out)
+
+
+async def sync_config_alerts() -> None:
+    """Une alerte par problème critique du dernier scan, sauf ceux acceptés."""
     rows = await db.fetchall(
         "SELECT target, check_id, title, detail FROM config_findings WHERE scan_id = (SELECT MAX(id) FROM vuln_scans WHERE status = 'done') AND severity = 'critical'"
     )
+    accepted = accepted_config()
     keep = set()
     for r in rows:
+        if config_key(r["target"], r["check_id"]) in accepted:
+            continue
         fp = f"config:{r['target']}:{r['check_id']}"
         keep.add(fp)
         await alerts.raise_alert(fp, "config", "critical", f"{r['title']} — {r['target']}", r["detail"], "Audit de configuration")
     await alerts.resolve_prefix("config:", keep)
+
+
+async def mark_interrupted_scans() -> None:
+    """Au démarrage : un scan resté « en cours » a été coupé (redémarrage, manque de mémoire)."""
+    await db.execute(
+        "UPDATE vuln_scans SET status = 'interrupted', finished_ts = ?, error = ? WHERE status = 'running'",
+        (time.time(), "Interrompu : LogSonar a redémarré pendant le scan"))
 
 
 async def latest_scan() -> dict | None:

@@ -105,6 +105,15 @@ def severity_of(vuln: dict, package: str = "", ecosystem: Optional[str] = None) 
             sc = cvss3_score(s.get("score", ""))
             if sc is not None and (best_score is None or sc > best_score):
                 best_score = sc
+
+    # La priorité Ubuntu tient compte de la façon dont le paquet est compilé et
+    # utilisé : beaucoup de failles du noyau notées 7+ en CVSS (pilotes absents
+    # d'un serveur...) y sont « medium ». Elle prime, le CVSS reste affiché.
+    ubuntu = [_LABELS[x] for x in (str(s.get("score", "")).lower() for s in vuln.get("severity") or []
+                                   if s.get("type") == "Ubuntu") if x in _LABELS]
+    if ubuntu:
+        return max(ubuntu, key=lambda x: SEV_ORDER[x]), best_score
+
     if best_score is not None:
         return score_to_severity(best_score), best_score
 

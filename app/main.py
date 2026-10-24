@@ -15,6 +15,7 @@ from . import __version__, config, db, security
 from . import settings_store as S
 from .alerts import alerts
 from .api import admin, auth, ingest, monitoring, tokens, users, vulns
+from .vuln.scanner import mark_interrupted_scans
 from .hub import hub
 from .monitor import monitor
 
@@ -25,6 +26,7 @@ async def lifespan(app: FastAPI):
     await db.init_db()
     await S.load()
     await alerts.load()
+    await mark_interrupted_scans()
     if not await db.scalar("SELECT COUNT(*) FROM users"):
         line = "=" * 64
         print(f"{line}\n  PREMIÈRE INSTALLATION — code d'installation : {security.SETUP_CODE}\n"

@@ -36,7 +36,7 @@ async def put_settings(values: dict[str, Any], _: dict = Depends(require_admin))
     clean: dict[str, Any] = {}
     errors = []
     for key, value in values.items():
-        if key not in S.DEFAULTS or key in ("muted_containers", "ingest_token"):
+        if key not in S.DEFAULTS or key in ("muted_containers", "ingest_token", "accepted_config"):
             continue
         if key in S.SECRET_KEYS and value in (None, "__keep__"):
             continue  # champ secret laissé vide dans le formulaire : on garde la valeur actuelle

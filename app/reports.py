@@ -164,11 +164,12 @@ async def _vuln_data(t1: float) -> dict:
         fixes = [f for f in (r.pop("fixes") or "").split(",") if f]
         r["fix"] = max(fixes, key=_natural_key) if fixes else ""
     out["top"] = top
-    out["config"] = await db.fetchall(
-        f"SELECT target, severity, title, fix FROM config_findings WHERE scan_id = ? AND severity IN ('critical', 'high')"
-        f" ORDER BY {sev_case}, target LIMIT 10", (cur["id"],))
-    out["config_counts"] = {r["severity"]: r["n"] for r in await db.fetchall(
-        "SELECT severity, COUNT(*) AS n FROM config_findings WHERE scan_id = ? GROUP BY severity", (cur["id"],))}
+    from .vuln.scanner import accepted_config, config_counts, config_key
+    accepted = accepted_config()
+    out["config"] = [r for r in await db.fetchall(
+        f"SELECT target, check_id, severity, title, fix FROM config_findings WHERE scan_id = ? AND severity IN ('critical', 'high')"
+        f" ORDER BY {sev_case}, target", (cur["id"],)) if config_key(r["target"], r["check_id"]) not in accepted][:10]
+    out["config_counts"] = await config_counts(cur["id"])
     out["new"] = []
     if len(scans) == 2:
         out["new"] = await db.fetchall(
