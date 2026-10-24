@@ -14,7 +14,7 @@ from ..alerts import alerts
 from ..collectors import docker_watch as D
 from ..hub import hub
 from . import audit, inventory
-from .osv import SEV_ORDER, OSVClient, fixed_version, severity_of
+from .osv import SEV_ORDER, OSVClient, fixed_version, only_packages, severity_of
 
 
 class ScanState:
@@ -128,12 +128,17 @@ async def _scan(scan_id: int, osv: OSVClient) -> dict:
     }
 
     all_ids = sorted({vid for ids in ids_per_pkg for vid in ids})
+    # Paquets concernés par chaque faille : on ne garde en mémoire que leurs entrées
+    names_by_vid: dict[str, set[str]] = defaultdict(set)
+    for p, ids in zip(pkgs, ids_per_pkg):
+        for vid in ids:
+            names_by_vid[vid].add(p["name"].lower())
     details: dict[str, dict] = {}
     done = 0
 
     async def fetch(vid: str) -> None:
         nonlocal done
-        details[vid] = await osv.get_vuln(vid)
+        details[vid] = only_packages(await osv.get_vuln(vid), names_by_vid[vid])
         done += 1
         if done % 25 == 0:
             scan_state.update(f"Détails des vulnérabilités ({done}/{len(all_ids)})", 55 + int(40 * done / max(len(all_ids), 1)))

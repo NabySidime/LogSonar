@@ -138,6 +138,43 @@ def fixed_version(vuln: dict, package: str, current: str, ecosystem: Optional[st
     return newer[0] if newer else ""
 
 
+def _severity_fields(spec: Optional[dict]) -> dict:
+    return {k: v for k, v in (spec or {}).items() if k in ("severity", "urgency")}
+
+
+def slim_vuln(data: dict) -> dict:
+    """
+    Ne garde que ce que LogSonar utilise. Une fiche Ubuntu sur le noyau pèse
+    ~340 Ko (136 variantes linux-*, avec la liste de leurs binaires) : sans ce
+    tri, quelques milliers de fiches dépassent la mémoire du conteneur.
+    """
+    slim = {
+        k: data.get(k) for k in
+        ("id", "summary", "details", "aliases", "upstream", "severity", "database_specific", "withdrawn", "published")
+        if data.get(k) is not None
+    }
+    slim["affected"] = [
+        {
+            "package": a.get("package"),
+            "ranges": a.get("ranges"),
+            "ecosystem_specific": _severity_fields(a.get("ecosystem_specific")),
+            "database_specific": _severity_fields(a.get("database_specific")),
+        }
+        for a in data.get("affected") or []
+    ]
+    if "details" in slim:
+        slim["details"] = slim["details"][:600]
+    return slim
+
+
+def only_packages(vuln: dict, names: set[str]) -> dict:
+    """Copie de la fiche réduite aux paquets donnés (noms en minuscules)."""
+    out = dict(vuln)
+    out["affected"] = [a for a in vuln.get("affected") or []
+                       if ((a.get("package") or {}).get("name") or "").lower() in names]
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Requêtes
 # ---------------------------------------------------------------------------
@@ -209,22 +246,7 @@ class OSVClient:
                 except httpx.HTTPError:
                     pass
                 await asyncio.sleep(1 + attempt)
-        slim = {
-            k: data.get(k) for k in
-            ("id", "summary", "details", "aliases", "upstream", "severity", "database_specific", "withdrawn", "published")
-            if data.get(k) is not None
-        }
-        slim["affected"] = [
-            {
-                "package": a.get("package"),
-                "ranges": a.get("ranges"),
-                "ecosystem_specific": a.get("ecosystem_specific"),
-                "database_specific": {k: v for k, v in (a.get("database_specific") or {}).items() if k in ("severity", "urgency")},
-            }
-            for a in data.get("affected") or []
-        ]
-        if "details" in slim:
-            slim["details"] = slim["details"][:600]
+        slim = slim_vuln(data)
         await db.execute(
             "INSERT OR REPLACE INTO osv_cache (vuln_id, data, fetched_ts) VALUES (?, ?, ?)",
             (vuln_id, json.dumps(slim), time.time()),
