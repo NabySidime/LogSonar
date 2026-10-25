@@ -8,9 +8,9 @@ from typing import Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from .. import db, score
+from .. import db, notify, score
 from .. import settings_store as S
-from ..alerts import alerts
+from ..alerts import SECRET_LABELS, alerts
 from ..collectors import docker_watch as D
 from ..collectors.host import get_sampler
 from ..detection.signatures import EXPLANATIONS
@@ -64,6 +64,7 @@ async def overview(_: dict = Depends(current_user)):
         "scan": {"last": {"id": scan["id"], "finished": scan["finished_ts"], **scan["summary"]} if scan else None,
                  "state": scan_state.as_dict()},
         "tls": monitor.tls,
+        "notifications": {"channels": notify.configured_channels(), "unreadable": [SECRET_LABELS.get(k, k) for k in S.unreadable_secrets()]},
     }
 
 

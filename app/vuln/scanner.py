@@ -15,7 +15,7 @@ from ..alerts import alerts
 from ..collectors import docker_watch as D
 from ..hub import hub
 from . import audit, inventory
-from .osv import SEV_ORDER, OSVClient, fixed_version, only_packages, severity_of
+from .osv import SEV_ORDER, OSVClient, fixed_version, only_packages, severity_of, slim_vuln
 
 
 class ScanState:
@@ -270,3 +270,32 @@ async def latest_scan() -> dict | None:
     if row:
         row["summary"] = json.loads(row["summary"] or "{}")
     return row
+
+
+async def slim_osv_cache(min_bytes: int = 20_000, batch: int = 50) -> int:
+    """
+    Réduit les fiches OSV mises en cache en entier par les versions d'avant
+    slim_vuln (fiches Ubuntu du noyau jusqu'à ~220 Ko chacune). Ne touche que
+    les grosses fiches, par lots (jamais tout en mémoire) ; sans effet une fois
+    le cache propre.
+    """
+    ids = [r["vuln_id"] for r in await db.fetchall(
+        "SELECT vuln_id FROM osv_cache WHERE length(data) > ?", (min_bytes,))]
+    done = 0
+    for start in range(0, len(ids), batch):
+        chunk = ids[start:start + batch]
+        marks = ",".join("?" * len(chunk))
+        updates = []
+        for r in await db.fetchall(f"SELECT vuln_id, data FROM osv_cache WHERE vuln_id IN ({marks})", chunk):
+            try:
+                slim = json.dumps(slim_vuln(json.loads(r["data"])))
+            except (ValueError, TypeError):
+                continue
+            if len(slim) < len(r["data"]):
+                updates.append((slim, r["vuln_id"]))
+        if updates:
+            await db.executemany("UPDATE osv_cache SET data = ? WHERE vuln_id = ?", updates)
+            done += len(updates)
+    if done:
+        print(f"LogSonar: {done} fiche(s) de vulnérabilité réduite(s) dans le cache.")
+    return done

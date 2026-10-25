@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse
 
 from .. import config, notify, reports
 from .. import settings_store as S
+from ..alerts import check_notification_setup
 from ..security import current_user, require_admin
 
 router = APIRouter(prefix="/api", tags=["admin"])
@@ -70,6 +71,7 @@ async def put_settings(values: dict[str, Any], _: dict = Depends(require_admin))
     if errors:
         raise HTTPException(422, " · ".join(errors))
     await S.set_many(clean)
+    await check_notification_setup()
     return {**S.public_view(), "channels": notify.configured_channels()}
 
 

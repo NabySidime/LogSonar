@@ -15,6 +15,9 @@ from .. import config
 from .parsers import is_private_ip, parse_http
 from .signatures import RULES, SEVERITY_ORDER
 
+# Taille minimale d'un fichier sensible réellement servi (ex. « API_KEY=abcdef12 »)
+MIN_EXPOSED_BYTES = 16
+
 _ANSI_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 _SQL_COMMENT_RE = re.compile(r"/\*.*?\*/")
 MAX_LINE = 8192
@@ -215,7 +218,10 @@ def analyze(raw_line: str, container: str, replay: bool = False) -> dict:
     if hit:
         event["attack_type"], event["severity"] = hit
         # Fichier sensible effectivement servi : c'est une fuite, pas une tentative.
-        if hit[0] == "Recherche de fichiers sensibles" and http["status"] == "200" and http["size"] not in ("", "0", "-"):
+        # Une réponse vide n'en est pas une : en encodage « chunked », nginx compte
+        # quand même le marqueur de fin « 0\r\n\r\n » (5 octets).
+        if (hit[0] == "Recherche de fichiers sensibles" and http["status"] == "200"
+                and http["size"].isdigit() and int(http["size"]) >= MIN_EXPOSED_BYTES):
             event["severity"] = "critical"
             event["attack_type"] = "Fichier sensible exposé"
     return event

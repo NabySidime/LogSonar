@@ -37,3 +37,25 @@ def test_same_severity_and_fix():
     eco = "Ubuntu:22.04:LTS"
     assert severity_of(small, "linux", eco) == severity_of(raw, "linux", eco) == ("medium", None)
     assert fixed_version(small, "linux", "5.15.0-25.25", eco) == fixed_version(raw, "linux", "5.15.0-25.25", eco) == "5.15.0-100.110"
+
+
+def test_cache_cleanup_slims_old_fat_records():
+    import asyncio
+    import json
+    import time
+
+    from app import db
+    from app.vuln import scanner
+
+    async def run():
+        await db.init_db()
+        fat = json.dumps(kernel_record())
+        await db.execute("INSERT OR REPLACE INTO osv_cache (vuln_id, data, fetched_ts) VALUES ('UBUNTU-CVE-2024-0001', ?, ?)",
+                         (fat, time.time()))
+        assert await scanner.slim_osv_cache(min_bytes=1000) == 1
+        row = await db.fetchone("SELECT data FROM osv_cache WHERE vuln_id = 'UBUNTU-CVE-2024-0001'")
+        assert len(row["data"]) < len(fat) / 2
+        assert severity_of(json.loads(row["data"]), "linux", "Ubuntu:22.04:LTS") == ("medium", None)
+        assert await scanner.slim_osv_cache(min_bytes=1000) == 0   # déjà propre : rien à faire
+        await db.close_db()
+    asyncio.run(run())

@@ -106,13 +106,29 @@ def _coerce(key: str, raw: Any) -> Any:
         return default
 
 
+# Secrets présents en base mais illisibles : chiffrés avec une autre clé que
+# data/.secret_key (clé régénérée, dossier de données changé...). Sans ce suivi,
+# ils passaient pour « non configurés » et les notifications cessaient en silence.
+_unreadable: set[str] = set()
+
+
+def unreadable_secrets() -> list[str]:
+    return sorted(_unreadable)
+
+
 async def load() -> None:
     _cache.clear()
+    _unreadable.clear()
     for row in await db.fetchall("SELECT key, value FROM settings"):
         key = row["key"]
         if key not in DEFAULTS:
             continue
-        raw = decrypt(row["value"]) if key in SECRET_KEYS else row["value"]
+        if key in SECRET_KEYS:
+            raw = decrypt(row["value"])
+            if row["value"] and not raw:
+                _unreadable.add(key)
+        else:
+            raw = row["value"]
         _cache[key] = _coerce(key, raw)
 
 
@@ -135,6 +151,7 @@ async def set_many(values: dict[str, Any]) -> None:
             stored = str(value)
         await db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, stored))
         _cache[key] = value
+        _unreadable.discard(key)  # ressaisi : de nouveau lisible
 
 
 def public_view() -> dict[str, Any]:
@@ -143,6 +160,7 @@ def public_view() -> dict[str, Any]:
     for key in DEFAULTS:
         if key in SECRET_KEYS:
             out[key + "_set"] = bool(get(key))
+            out[key + "_unreadable"] = key in _unreadable
         else:
             out[key] = get(key)
     return out

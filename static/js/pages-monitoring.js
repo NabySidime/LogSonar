@@ -40,6 +40,8 @@ App.pages.overview = async (view) => {
 
   setHTML(view, html`
     ${!d.docker.connected ? html`<div class="callout danger" style="margin-bottom:16px">${icon("plug-zap")}<div><b>Docker inaccessible.</b> La surveillance des conteneurs est interrompue. <span class="muted">${d.docker.error}</span></div></div>` : ""}
+    ${d.notifications && d.notifications.unreadable.length ? html`<div class="callout danger" style="margin-bottom:16px">${icon("key-round")}<div><b>Secret(s) illisible(s) : ${d.notifications.unreadable.join(", ")}.</b> Ils sont enregistrés mais chiffrés avec une autre clé : LogSonar ne peut plus les utiliser. ${App.isAdmin() ? html`<a href="#/settings">Ressaisissez-les dans Paramètres</a>.` : "Prévenez un administrateur."}</div></div>` : ""}
+    ${d.notifications && !d.notifications.channels.length ? html`<div class="callout warn" style="margin-bottom:16px">${icon("bell-off")}<div><b>Aucune notification ne part.</b> Aucun canal (email, Discord, Slack, Telegram, webhook) n'est configuré : les alertes restent visibles ici uniquement. ${App.isAdmin() ? html`<a href="#/settings">Configurer un canal</a>.` : ""}</div></div>` : ""}
     ${d.host_info && !d.host_info.host_mode ? html`<div class="callout warn" style="margin-bottom:16px">${icon("info")}<div>Les métriques affichées sont celles du conteneur LogSonar : montez <code>/proc:/host/proc:ro</code> et <code>/:/hostfs:ro</code> pour voir le serveur entier (voir docker-compose.yml).</div></div>` : ""}
     <div class="grid g-4" id="gauges">${hostGauges(d.host)}</div>
 

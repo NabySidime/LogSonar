@@ -150,3 +150,36 @@ class AlertManager:
 
 
 alerts = AlertManager()
+
+
+# ---------------------------------------------------------------------------
+# Santé des notifications : sans canal qui fonctionne, les alertes ne partent
+# nulle part et rien ne le signalait.
+# ---------------------------------------------------------------------------
+SECRET_LABELS = {
+    "brevo_api_key": "clé API Brevo", "discord_webhook": "webhook Discord", "slack_webhook": "webhook Slack",
+    "telegram_bot_token": "token Telegram", "webhook_url": "URL du webhook", "ingest_token": "jeton du middleware",
+}
+
+
+async def check_notification_setup() -> None:
+    """À appeler au démarrage et après chaque enregistrement des paramètres."""
+    bad = S.unreadable_secrets()
+    if bad:
+        names = ", ".join(SECRET_LABELS.get(k, k) for k in bad)
+        await alerts.raise_alert(
+            "settings:unreadable-secrets", "system", "high", f"Secret(s) illisible(s) : {names}",
+            "Ces secrets sont enregistrés mais chiffrés avec une autre clé que data/.secret_key "
+            "(clé régénérée ou dossier de données changé) : LogSonar ne peut plus les lire et "
+            "les traite comme absents. Ressaisissez-les dans Paramètres.", "Paramètres")
+    else:
+        await alerts.resolve("settings:unreadable-secrets")
+
+    if not notify.configured_channels():
+        await alerts.raise_alert(
+            "settings:no-notification", "system", "warning", "Aucun canal de notification configuré",
+            "Les alertes restent visibles ici mais ne sont envoyées nulle part (email, Discord, Slack, "
+            "Telegram, webhook). Configurez au moins un canal dans Paramètres, puis utilisez « Tester ».",
+            "Paramètres")
+    else:
+        await alerts.resolve("settings:no-notification")

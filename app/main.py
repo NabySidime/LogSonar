@@ -13,9 +13,9 @@ from fastapi.staticfiles import StaticFiles
 
 from . import __version__, config, db, security
 from . import settings_store as S
-from .alerts import alerts
+from .alerts import alerts, check_notification_setup
 from .api import admin, auth, ingest, monitoring, tokens, users, vulns
-from .vuln.scanner import mark_interrupted_scans
+from .vuln.scanner import mark_interrupted_scans, slim_osv_cache
 from .hub import hub
 from .monitor import monitor
 
@@ -27,6 +27,10 @@ async def lifespan(app: FastAPI):
     await S.load()
     await alerts.load()
     await mark_interrupted_scans()
+    await check_notification_setup()
+    # En arrière-plan : jusqu'à ~30 s sur un gros cache, LogSonar répond pendant ce temps
+    cleanup = asyncio.create_task(slim_osv_cache())
+    cleanup.add_done_callback(lambda t: t.cancelled() or not t.exception() or print(f"LogSonar: nettoyage du cache en échec : {t.exception()}"))
     if not await db.scalar("SELECT COUNT(*) FROM users"):
         line = "=" * 64
         print(f"{line}\n  PREMIÈRE INSTALLATION — code d'installation : {security.SETUP_CODE}\n"

@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from .. import security as sec
 from .. import settings_store as S
+from ..alerts import check_notification_setup
 from ..monitor import monitor
 
 router = APIRouter(tags=["ingest"])
@@ -71,10 +72,12 @@ async def new_token(_: dict = Depends(sec.require_admin)):
     """Génère un nouveau jeton. Il n'est affiché qu'une fois ; l'ancien cesse de fonctionner."""
     token = "lsi_" + secrets.token_urlsafe(32)
     await S.set_many({"ingest_token": token})
+    await check_notification_setup()
     return {"token": token}
 
 
 @router.delete("/api/settings/ingest/token")
 async def delete_token(_: dict = Depends(sec.require_admin)):
     await S.set_many({"ingest_token": ""})
+    await check_notification_setup()
     return {"ok": True}

@@ -96,6 +96,14 @@ def test_sensitive_file_served_is_critical():
     assert ev["severity"] == "critical"
 
 
+def test_empty_200_is_not_an_exposed_file():
+    # mailcow répond 200 vide pour /cache/* : nginx journalise 5 octets (« 0\r\n\r\n »)
+    for size in (5, 0, "-"):
+        ev = analyze(nginx("/cache/.env", status=200, size=size), "web")
+        assert ev["attack_type"] == "Recherche de fichiers sensibles"
+        assert ev["severity"] != "critical"
+
+
 def test_app_log_alerts():
     ev = analyze("WARNING django.security.DisallowedHost Invalid HTTP_HOST header: 'evil.com'", "api")
     assert ev["kind"] == "app" and ev["attack_type"] == "Alerte interne de l'application"
