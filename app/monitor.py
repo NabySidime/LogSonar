@@ -21,6 +21,10 @@ from .security import account_limiter, ip_limiter
 from .traffic import traffic
 from .vuln import audit, scanner
 
+# Attente (s) avant d'alerter sur une attaque vue avec une IP interne. Doit rester
+# inférieure à la fenêtre de 5 s de _is_duplicate.
+PROXY_WAIT = 3.0
+
 
 def _fmt_bytes(n: float) -> str:
     for unit in ("o", "Ko", "Mo", "Go", "To"):
@@ -164,6 +168,11 @@ class Monitor:
         self._spawn(self._security_alerts(ev))
 
     async def _security_alerts(self, ev: dict) -> None:
+        if ev["kind"] == "web" and is_private_ip(ev["ip"]):
+            # L'application voit l'IP interne du proxy et écrit souvent sa ligne avant lui :
+            # on laisse à la ligne du proxy le temps d'arriver pour que _is_duplicate
+            # remplace l'IP interne par l'IP réelle avant d'alerter.
+            await asyncio.sleep(PROXY_WAIT)
         ip = ev["ip"] or "IP inconnue"
         typ, sev = ev["attack_type"], ev["severity"]
         where = f"{ev['container']}"
