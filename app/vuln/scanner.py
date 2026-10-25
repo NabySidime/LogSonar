@@ -151,6 +151,7 @@ async def _scan(scan_id: int, osv: OSVClient) -> dict:
     rows = []
     sev_total: Counter = Counter()
     per_target: dict[str, Counter] = defaultdict(Counter)
+    fix_sev: Counter = Counter()
     fixable = 0
     for t in targets:
         for p in t["packages"]:
@@ -175,6 +176,7 @@ async def _scan(scan_id: int, osv: OSVClient) -> dict:
                 per_target[t["name"]][sev] += 1
                 if fix:
                     fixable += 1
+                    fix_sev[sev] += 1
     await db.executemany(
         "INSERT INTO vuln_findings (scan_id, target, target_kind, image, ecosystem, package, version, vuln_id,"
         " aliases, severity, score, summary, fixed_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows,
@@ -196,6 +198,7 @@ async def _scan(scan_id: int, osv: OSVClient) -> dict:
         "vulns_total": sum(sev_total.values()),
         "vulns_by_severity": {k: sev_total.get(k, 0) for k in SEV_ORDER},
         "fixable": fixable,
+        "fixable_by_severity": {k: fix_sev.get(k, 0) for k in SEV_ORDER},
         "config_total": len(config_findings),
         "config_by_severity": dict(cfg_sev),
         "errors": errors,

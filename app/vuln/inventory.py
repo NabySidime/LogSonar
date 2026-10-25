@@ -19,6 +19,25 @@ from ..collectors import docker_watch as D
 
 PY_VERSIONS = [f"3.{m}" for m in range(14, 6, -1)]
 KERNEL_SOURCES = {"linux", "linux-signed-amd64", "linux-signed-arm64", "linux-lts"}
+# Version de noyau dans un nom de paquet : linux-image-6.8.0-137-generic -> 6.8.0-137
+_KERNEL_ABI = re.compile(r"-(\d+\.\d+\.\d+-\d+)(?:-|$)")
+
+
+def kernel_abi(release: str) -> Optional[str]:
+    """« 6.8.0-147-generic » (uname -r) -> « 6.8.0-147 »."""
+    m = re.match(r"(\d+\.\d+\.\d+-\d+)", release or "")
+    return m.group(1) if m else None
+
+
+def drop_old_kernels(pkgs: list[dict], running: Optional[str]) -> tuple[list[dict], int]:
+    """
+    Retire les paquets des noyaux installés mais pas en marche (gardés en secours
+    par Ubuntu) : ils ne tournent pas et comptaient chaque faille en double.
+    """
+    if not running or not any((m := _KERNEL_ABI.search(p.get("binary", ""))) and m.group(1) == running for p in pkgs):
+        return pkgs, 0  # noyau actif introuvable dans les paquets : on ne retire rien
+    kept = [p for p in pkgs if not ((m := _KERNEL_ABI.search(p.get("binary", ""))) and m.group(1) != running)]
+    return kept, len(pkgs) - len(kept)
 
 
 def _parse_os_release(text: str) -> dict:
@@ -126,7 +145,7 @@ def _dedupe(pkgs: list[dict]) -> list[dict]:
 # Lecteurs génériques : conteneur (API d'archive) ou hôte (fichiers montés)
 # ---------------------------------------------------------------------------
 def _collect(read_text: Callable[[str], Optional[str]], list_dir: Callable[[str], Optional[list[str]]],
-             workdirs: list[str], env: dict, host: bool = False) -> dict:
+             workdirs: list[str], env: dict, host: bool = False, running_kernel: Optional[str] = None) -> dict:
     result = {"os": {}, "packages": [], "sources": []}
     osr_text = read_text("/etc/os-release") or read_text("/usr/lib/os-release") or ""
     osr = _parse_os_release(osr_text)
@@ -145,6 +164,9 @@ def _collect(read_text: Callable[[str], Optional[str]], list_dir: Callable[[str]
         else:
             installed = read_text("/lib/apk/db/installed")
             os_pkgs = parse_apk_installed(installed) if installed else []
+        old_kernels = 0
+        if host:
+            os_pkgs, old_kernels = drop_old_kernels(os_pkgs, kernel_abi(running_kernel or ""))
         for p in os_pkgs:
             # Les sources du noyau (linux-libc-dev...) n'ont pas de sens dans une image :
             # un conteneur tourne sur le noyau de l'hôte, qui est scanné à part.
@@ -153,6 +175,8 @@ def _collect(read_text: Callable[[str], Optional[str]], list_dir: Callable[[str]
             result["packages"].append({"ecosystem": eco, "name": p["name"], "version": p["version"]})
         if os_pkgs:
             result["sources"].append(f"{len(os_pkgs)} paquets système ({eco})")
+        if old_kernels:
+            result["sources"].append(f"{old_kernels} paquets d'anciens noyaux ignorés (noyau actif {running_kernel})")
 
     # Python : site-packages des emplacements habituels (+ virtualenv déclaré)
     py_dirs = []
@@ -228,7 +252,11 @@ def host_inventory() -> Optional[dict]:
         except OSError:
             return None
 
-    inv = _collect(read_text, list_dir, [], {}, host=True)
+    try:
+        running = (config.HOST_PROC / "sys/kernel/osrelease").read_text().strip()
+    except OSError:
+        running = ""
+    inv = _collect(read_text, list_dir, [], {}, host=True, running_kernel=running)
     # Sur l'hôte, seuls les paquets système nous intéressent (Python système = paquets dpkg)
     inv["packages"] = [p for p in inv["packages"] if p["ecosystem"] not in ("PyPI", "npm")]
     inv["sources"] = [s for s in inv["sources"] if "Python" not in s and "npm" not in s]

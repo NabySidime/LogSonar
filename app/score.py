@@ -21,11 +21,27 @@ def compute(scan_summary: Optional[dict], open_alerts: list[dict], host: dict, t
 
     if scan_summary:
         v = scan_summary.get("vulns_by_severity") or {}
-        add(f"{v.get('critical', 0)} vulnérabilité(s) critique(s)", _pen(v.get("critical", 0), 2.5, 25),
-            "Mettez à jour les paquets concernés (onglet Vulnérabilités).")
-        add(f"{v.get('high', 0)} vulnérabilité(s) élevée(s)", _pen(v.get("high", 0), 0.5, 15),
-            "Reconstruisez les images avec des versions de base récentes.")
-        add(f"{v.get('medium', 0)} vulnérabilité(s) moyenne(s)", _pen(v.get("medium", 0), 0.1, 5), "")
+        # Les failles corrigeables pèsent lourd : une mise à jour suffit. Celles
+        # sans correctif publié (fréquentes dans le noyau) pèsent peu : on ne
+        # peut qu'attendre, et elles empêcheraient le score de remonter.
+        f = scan_summary.get("fixable_by_severity")
+        if f is None:  # scan d'une version précédente : tout compte comme corrigeable
+            f = v
+        # Par gravité : (poids corrigeable, plafond, poids sans correctif, plafond sans correctif).
+        # Les failles sans correctif partagent le plafond de la gravité et ne
+        # prennent que la place laissée : le score n'est jamais plus bas qu'avant.
+        rules = {"critical": (2.5, 25, 0.25, 5), "high": (0.5, 15, 0.02, 3), "medium": (0.1, 5, 0, 0)}
+        labels = {"critical": "critique(s)", "high": "élevée(s)", "medium": "moyenne(s)"}
+        hints = {"critical": "Mettez à jour les paquets concernés (onglet Vulnérabilités).",
+                 "high": "Reconstruisez les images avec des versions de base récentes.", "medium": ""}
+        for sev, (w_fix, cap, w_nofix, cap_nofix) in rules.items():
+            n_fix = f.get(sev, 0)
+            n_nofix = max(v.get(sev, 0) - n_fix, 0)
+            p_fix = _pen(n_fix, w_fix, cap)
+            add(f"{n_fix} vulnérabilité(s) {labels[sev]} corrigeable(s)", p_fix, hints[sev])
+            add(f"{n_nofix} vulnérabilité(s) {labels[sev]} sans correctif publié",
+                min(_pen(n_nofix, w_nofix, cap_nofix), cap - p_fix),
+                "Aucune version corrigée n'existe encore : refaites les mises à jour régulièrement.")
         c = config_counts or scan_summary.get("config_by_severity") or {}
         add(f"{c.get('critical', 0)} problème(s) de configuration critique(s)", _pen(c.get("critical", 0), 10, 20),
             "Ex. base de données exposée sur Internet, conteneur privilégié.")
