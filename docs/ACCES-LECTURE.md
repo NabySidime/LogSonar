@@ -63,15 +63,17 @@ Le jeton reste dans la variable : il n'est jamais affiché. Chaque commande pass
 | Route | Contenu |
 |---|---|
 | `GET /api/overview` | score, état du serveur, attaques du jour, conteneurs |
-| `GET /api/alerts?status=active` | alertes en cours (`resolved`, `all`) |
-| `GET /api/security/events?limit=100` | attaques détectées |
-| `GET /api/security/stats?days=7` | statistiques d'attaques |
-| `GET /api/host?range=24h` · `/api/host/processes` | métriques et processus du serveur |
+| `GET /api/alerts?status=active` | alertes en cours (`resolved`, `all`) ; période : `since`, `until` |
+| `GET /api/security/events?limit=100` | attaques détectées ; filtres `status` (`200`, `200,301`, `2xx`, `none`), `since`, `until`, `ip`, `attack_type`, `severity` |
+| `GET /api/security/stats?days=7` | statistiques d'attaques (ou `since`/`until`), dont la répartition par code (`by_status`) |
+| `GET /api/host?range=24h` (ou `since`/`until`) · `/api/host/processes` | métriques et processus du serveur |
 | `GET /api/containers` · `/api/containers/{nom}/history` | conteneurs |
 | `GET /api/traffic` | trafic HTTP |
 | `GET /api/system` | état de LogSonar |
 | `GET /api/vulns/summary` · `/api/vulns/findings` · `/api/vulns/config` · `/api/vulns/tls` | vulnérabilités, audit, certificats |
 | `GET /api/reports` · `/api/reports/{fichier}` | rapports quotidiens |
+
+`since` et `until` sont des horodatages Unix en secondes.
 
 ## Ce que contiennent ces données
 Adresses IP des attaquants, URL visées, extraits d'attaques (jamais de mot de passe ni de donnée bancaire), métriques, liste des paquets vulnérables. Aucun secret (clés API, mots de passe, jetons) n'est accessible. Traitez néanmoins le jeton comme un mot de passe.

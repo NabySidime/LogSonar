@@ -24,6 +24,16 @@ router = APIRouter(prefix="/api", tags=["monitoring"])
 RANGES = {"1h": 3600, "6h": 6 * 3600, "24h": 86400, "7d": 7 * 86400, "14d": 14 * 86400}
 
 
+def _period(since: Optional[float], until: Optional[float], default_seconds: int) -> tuple[float, float]:
+    """Période personnalisée (début, fin) ; à défaut, les `default_seconds` dernières secondes."""
+    now = time.time()
+    end = min(until, now) if until else now
+    start = since if since else end - default_seconds
+    if start >= end:
+        raise HTTPException(400, "Le début de la période doit précéder sa fin.")
+    return start, end
+
+
 def _today_start() -> float:
     return datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
 
@@ -69,10 +79,11 @@ async def overview(_: dict = Depends(current_user)):
 
 
 @router.get("/host")
-async def host(range: str = "1h", _: dict = Depends(current_user)):
-    seconds = RANGES.get(range, 3600)
-    since = time.time() - seconds
-    rows = await db.fetchall("SELECT * FROM host_metrics WHERE ts >= ? ORDER BY ts", (since,))
+async def host(range: str = "1h", since: Optional[float] = None, until: Optional[float] = None,
+               _: dict = Depends(current_user)):
+    since, until = _period(since, until, RANGES.get(range, 3600))
+    seconds = until - since
+    rows = await db.fetchall("SELECT * FROM host_metrics WHERE ts >= ? AND ts <= ? ORDER BY ts", (since, until))
     # Agrégation pour garder environ 300 points par graphique
     step = max(60, int(seconds / 300 // 60 * 60))
     if step > 60 and rows:
@@ -139,9 +150,31 @@ async def traffic_view(minutes: int = Query(60, ge=5, le=60), _: dict = Depends(
 # ---------------------------------------------------------------------------
 # Menaces
 # ---------------------------------------------------------------------------
+def _status_filter(status: str) -> tuple[str, list]:
+    """« 200,301 » (codes exacts), « 2xx » (famille), « none » (sans code), combinables."""
+    parts, params = [], []
+    for token in sorted({t.strip().lower() for t in status.split(",") if t.strip()}):
+        if token.isdigit() and len(token) == 3:
+            parts.append("status = ?")
+            params.append(token)
+        elif len(token) == 3 and token[0] in "12345" and token[1:] == "xx":
+            parts.append("status LIKE ?")
+            params.append(token[0] + "__")
+        elif token == "none":
+            parts.append("status = ''")
+        else:
+            raise HTTPException(400, f"Code HTTP invalide : {token[:10]}")
+    return "(" + " OR ".join(parts) + ")", params
+
+
 def _event_filters(q: Optional[str], attack_type: Optional[str], ip: Optional[str], severity: Optional[str],
-                   container: Optional[str], since: Optional[float], until: Optional[float]) -> tuple[str, list]:
+                   container: Optional[str], since: Optional[float], until: Optional[float],
+                   status: Optional[str] = None) -> tuple[str, list]:
     where, params = [], []
+    if status and status.strip(", "):
+        clause, values = _status_filter(status)
+        where.append(clause)
+        params += values
     if q:
         where.append("(path LIKE ? OR raw LIKE ? OR ip LIKE ? OR ua LIKE ?)")
         params += [f"%{q}%"] * 4
@@ -162,11 +195,11 @@ def _event_filters(q: Optional[str], attack_type: Optional[str], ip: Optional[st
 async def events(
     q: Optional[str] = None, attack_type: Optional[str] = None, ip: Optional[str] = None,
     severity: Optional[str] = None, container: Optional[str] = None,
-    since: Optional[float] = None, until: Optional[float] = None,
+    since: Optional[float] = None, until: Optional[float] = None, status: Optional[str] = None,
     limit: int = Query(50, ge=1, le=500), offset: int = Query(0, ge=0),
     _: dict = Depends(current_user),
 ):
-    where, params = _event_filters(q, attack_type, ip, severity, container, since, until)
+    where, params = _event_filters(q, attack_type, ip, severity, container, since, until, status)
     total = await db.scalar(f"SELECT COUNT(*) FROM security_events{where}", params)
     rows = await db.fetchall(
         f"SELECT * FROM security_events{where} ORDER BY id DESC LIMIT ? OFFSET ?", (*params, limit, offset))
@@ -174,27 +207,45 @@ async def events(
 
 
 @router.get("/security/stats")
-async def security_stats(days: int = Query(7, ge=1, le=90), _: dict = Depends(current_user)):
-    since = (datetime.now() - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+async def security_stats(days: int = Query(7, ge=1, le=90), since: Optional[float] = None,
+                         until: Optional[float] = None, _: dict = Depends(current_user)):
+    if since is None:
+        # Sans période personnalisée : les `days` derniers jours, aujourd'hui compris
+        since = (datetime.now() - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    since, until = _period(since, until, 0)
+    if until - since > 366 * 86400:
+        raise HTTPException(400, "Période trop longue (un an maximum).")
+    span = "ts >= ? AND ts < ?"
+    period = (since, until)
     by_type = await db.fetchall(
-        "SELECT attack_type, severity, COUNT(*) AS n FROM security_events WHERE ts >= ? GROUP BY attack_type ORDER BY n DESC", (since,))
+        f"SELECT attack_type, severity, COUNT(*) AS n FROM security_events WHERE {span} GROUP BY attack_type ORDER BY n DESC", period)
     top_ips = await db.fetchall(
         "SELECT ip, COUNT(*) AS n, COUNT(DISTINCT attack_type) AS types, MAX(ts) AS last_ts,"
         " SUM(CASE WHEN status LIKE '2%' THEN 1 ELSE 0 END) AS success"
-        " FROM security_events WHERE ts >= ? AND ip != '' GROUP BY ip ORDER BY n DESC LIMIT 15", (since,))
-    rows = await db.fetchall("SELECT ts FROM security_events WHERE ts >= ?", (since,))
-    days_count: dict[str, int] = {}
-    for r in rows:
-        d = datetime.fromtimestamp(r["ts"]).strftime("%Y-%m-%d")
-        days_count[d] = days_count.get(d, 0) + 1
+        f" FROM security_events WHERE {span} AND ip != '' GROUP BY ip ORDER BY n DESC LIMIT 15", period)
+    by_status = await db.fetchall(
+        f"SELECT status, COUNT(*) AS n FROM security_events WHERE {span} GROUP BY status ORDER BY status", period)
+
+    # Courbe par heure sur deux jours ou moins, par jour au-delà
+    hourly = until - since <= 2 * 86400
+    fmt = "%Y-%m-%d %H" if hourly else "%Y-%m-%d"
+    counts: dict[str, int] = {}
+    for r in await db.fetchall(f"SELECT ts FROM security_events WHERE {span}", period):
+        key = datetime.fromtimestamp(r["ts"]).strftime(fmt)
+        counts[key] = counts.get(key, 0) + 1
     timeline = []
-    for i in range(days):
-        d = (datetime.now() - timedelta(days=days - 1 - i)).strftime("%Y-%m-%d")
-        timeline.append({"day": d, "count": days_count.get(d, 0)})
+    cur = datetime.fromtimestamp(since).replace(minute=0, second=0, microsecond=0)
+    if not hourly:
+        cur = cur.replace(hour=0)
+    step = timedelta(hours=1) if hourly else timedelta(days=1)
+    while cur.timestamp() < until:
+        key = cur.strftime(fmt)
+        timeline.append({"day": key[:10], "hour": int(key[11:]) if hourly else None, "count": counts.get(key, 0)})
+        cur += step
     by_container = await db.fetchall(
-        "SELECT container, COUNT(*) AS n FROM security_events WHERE ts >= ? GROUP BY container ORDER BY n DESC LIMIT 10", (since,))
+        f"SELECT container, COUNT(*) AS n FROM security_events WHERE {span} GROUP BY container ORDER BY n DESC LIMIT 10", period)
     return {"by_type": by_type, "top_ips": top_ips, "timeline": timeline, "by_container": by_container,
-            "explanations": EXPLANATIONS}
+            "by_status": by_status, "since": since, "until": until, "explanations": EXPLANATIONS}
 
 
 # ---------------------------------------------------------------------------
@@ -203,20 +254,28 @@ async def security_stats(days: int = Query(7, ge=1, le=90), _: dict = Depends(cu
 @router.get("/alerts")
 async def list_alerts(
     status: Literal["active", "resolved", "all"] = "active",
+    since: Optional[float] = None, until: Optional[float] = None,
     limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0),
     _: dict = Depends(current_user),
 ):
+    where, params = [], []
     if status == "active":
-        where = "WHERE status != 'resolved'"
+        where.append("status != 'resolved'")
     elif status == "resolved":
-        where = "WHERE status = 'resolved'"
-    else:
-        where = ""
-    total = await db.scalar(f"SELECT COUNT(*) FROM alerts {where}")
+        where.append("status = 'resolved'")
+    # Période : alertes en cours à un moment de la période (apparues avant sa fin, vues après son début)
+    if since:
+        where.append("last_ts >= ?")
+        params.append(since)
+    if until:
+        where.append("first_ts < ?")
+        params.append(until)
+    clause = ("WHERE " + " AND ".join(where)) if where else ""
+    total = await db.scalar(f"SELECT COUNT(*) FROM alerts {clause}", params)
     rows = await db.fetchall(
-        f"SELECT * FROM alerts {where} ORDER BY CASE status WHEN 'resolved' THEN 1 ELSE 0 END,"
+        f"SELECT * FROM alerts {clause} ORDER BY CASE status WHEN 'resolved' THEN 1 ELSE 0 END,"
         " CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'warning' THEN 2 ELSE 3 END, last_ts DESC"
-        " LIMIT ? OFFSET ?", (limit, offset))
+        " LIMIT ? OFFSET ?", (*params, limit, offset))
     return {"total": total, "items": rows}
 
 

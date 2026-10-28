@@ -151,6 +151,35 @@ const DEL = (u) => api("DELETE", u);
 const qs = (o) => Object.entries(o).filter(([, v]) => v !== "" && v != null && v !== false).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&");
 
 // ---------------------------------------------------------------------------
+// Paramètres de l'URL (#/page?a=1) et choix de la période
+// ---------------------------------------------------------------------------
+const hashParams = () => new URLSearchParams(location.hash.split("?")[1] || "");
+function setHashParams(changes) {
+  const [path] = location.hash.split("?");
+  const p = hashParams();
+  Object.entries(changes).forEach(([k, v]) => (v === "" || v == null ? p.delete(k) : p.set(k, v)));
+  const s = p.toString();
+  location.hash = s ? `${path}?${s}` : path;
+}
+// Période personnalisée : début (from) et fin facultative (to), en secondes, dans l'URL
+function customPeriod() {
+  const p = hashParams();
+  const from = Number(p.get("from")) || 0, to = Number(p.get("to")) || 0;
+  return from ? { from, to: to || null } : null;
+}
+const toLocalInput = (ts) => { const d = new Date(ts * 1000); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+/**
+ * Boutons de période : `presets` = [[valeur, libellé]] écrits dans le paramètre `param`,
+ * plus « Personnalisée » (au plus `maxDays` jours en arrière : durée de conservation).
+ */
+function periodPicker(param, presets, current, maxDays) {
+  const c = customPeriod();
+  const label = c ? `${fmtDate(c.from)} → ${c.to ? fmtDate(c.to) : "maintenant"}` : "Personnalisée";
+  return html`<div class="seg">${presets.map(([v, l]) => html`<button class="${!c && v === current ? "active" : ""}" data-action="period-preset" data-param="${param}" data-value="${v}">${l}</button>`)}
+    <button class="${c ? "active" : ""}" data-action="period-custom" data-param="${param}" data-max="${maxDays}" title="Choisir le début et la fin">${icon("calendar-range")}${label}</button></div>`;
+}
+
+// ---------------------------------------------------------------------------
 // Notifications et fenêtres
 // ---------------------------------------------------------------------------
 function toast(msg, type = "") {
@@ -417,6 +446,26 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeOverl
 
 Object.assign(App.actions, {
   close: closeOverlay,
+  "period-preset": (el) => setHashParams({ [el.dataset.param]: el.dataset.value, from: "", to: "" }),
+  "period-custom": (el) => {
+    const c = customPeriod(), now = Date.now() / 1000;
+    const min = toLocalInput(now - Number(el.dataset.max) * 86400), max = toLocalInput(now);
+    openOverlay({
+      kind: "modal", title: "Période personnalisée", sub: `Données conservées ${el.dataset.max} jours`,
+      body: html`<div class="field"><label for="pp-from">Du</label><input type="datetime-local" class="input" id="pp-from" min="${min}" max="${max}" value="${toLocalInput(c ? c.from : now - 86400)}"></div>
+        <div class="field"><label for="pp-to">Au</label><input type="datetime-local" class="input" id="pp-to" min="${min}" max="${max}" value="${c && c.to ? toLocalInput(c.to) : ""}">
+        <span class="tiny muted">Laissez vide pour aller jusqu'à maintenant.</span></div>`,
+      foot: html`<button class="btn" data-action="close">Annuler</button><button class="btn primary" id="pp-ok">${icon("check")}Appliquer</button>`,
+    });
+    $("#pp-ok").addEventListener("click", () => {
+      const from = $("#pp-from").value ? new Date($("#pp-from").value).getTime() / 1000 : 0;
+      const to = $("#pp-to").value ? new Date($("#pp-to").value).getTime() / 1000 : 0;
+      if (!from) { toast("Indiquez le début de la période.", "error"); return; }
+      if (to && to <= from) { toast("La fin doit être après le début.", "error"); return; }
+      closeOverlay();
+      setHashParams({ [el.dataset.param]: "", from: Math.floor(from), to: to ? Math.floor(to) : "" });
+    });
+  },
   menu: () => $("#sidebar").classList.toggle("open"),
   theme: () => {
     const cur = document.documentElement.getAttribute("data-theme") ||

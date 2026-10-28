@@ -119,12 +119,16 @@ App.pages.overview = async (view) => {
 // SERVEUR
 // ===========================================================================
 App.pages.server = async (view) => {
-  const range = new URLSearchParams(location.hash.split("?")[1] || "").get("range") || "1h";
-  setHeader("Serveur", "Ressources de la machine hôte", html`<div class="seg">${["1h", "6h", "24h", "7d"].map((r) => html`<button class="${r === range ? "active" : ""}" data-action="server-range" data-range="${r}">${r.replace("d", " j").replace("h", " h")}</button>`)}</div>`);
-  const d = await GET(`/api/host?range=${range}`);
+  const range = hashParams().get("range") || "1h";
+  const custom = customPeriod();
+  setHeader("Serveur", "Ressources de la machine hôte",
+    periodPicker("range", ["1h", "6h", "24h", "7d", "14d"].map((r) => [r, r.replace("d", " j").replace("h", " h")]), range, 14));
+  const d = await GET(`/api/host?${qs(custom ? { since: custom.from, until: custom.to } : { range })}`);
   const info = d.info, h = d.now;
   const hist = d.history;
-  const labels = hist.map((p) => (range === "7d" ? fmtDate(p.ts) : fmtTime(p.ts)));
+  // Au-delà d'une journée, l'heure seule ne suffit plus : on affiche aussi la date
+  const longSpan = hist.length > 1 && hist[hist.length - 1].ts - hist[0].ts > 86400;
+  const labels = hist.map((p) => (longSpan ? fmtDate(p.ts) : fmtTime(p.ts)));
   const df = d.docker_df || {};
 
   setHTML(view, html`
@@ -199,7 +203,6 @@ App.pages.server = async (view) => {
   every(15000, loadProcs);
   on("host", (x) => patchHTML($("#gauges"), hostGauges(x)));
 };
-App.actions["server-range"] = (el) => { location.hash = `#/server?range=${el.dataset.range}`; };
 
 // ===========================================================================
 // CONTENEURS

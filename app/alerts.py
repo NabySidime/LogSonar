@@ -42,7 +42,8 @@ class AlertManager:
         return sorted(self._open.values(), key=lambda a: (-LEVELS.get(a["severity"], 0), -a["last_ts"]))
 
     async def raise_alert(self, fingerprint: str, category: str, severity: str, title: str,
-                          message: str = "", source: str = "") -> dict:
+                          message: str = "", source: str = "", notify: bool = True) -> dict:
+        """`notify=False` : alerte visible dans le dashboard seulement, jamais envoyée."""
         now = time.time()
         async with self._lock:
             existing = self._open.get(fingerprint)
@@ -59,7 +60,8 @@ class AlertManager:
                 if escalated:
                     existing["status"] = "open"
                     await db.execute("UPDATE alerts SET status = 'open' WHERE id = ?", (existing["id"],))
-                    self._notify(existing)
+                    if notify:
+                        self._notify(existing)
                 hub.publish("alert", existing)
                 return existing
 
@@ -75,7 +77,8 @@ class AlertManager:
             )
             self._open[fingerprint] = alert
         hub.publish("alert", alert)
-        self._notify(alert)
+        if notify:
+            self._notify(alert)
         return alert
 
     async def resolve(self, fingerprint: str, note: str = "") -> None:

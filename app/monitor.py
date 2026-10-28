@@ -186,8 +186,15 @@ class Monitor:
             await alerts.raise_alert(f"brute:{ip}", "security", "high", f"Force brute depuis {ip}", msg, where)
         elif typ == "Flood":
             await alerts.raise_alert(f"flood:{ip}", "security", "warning", f"Volume de requêtes anormal depuis {ip}", msg, where)
+        elif sev == "critical" and is_success(ev["status"]):
+            # Seule une attaque critique acceptée par le serveur part par email
+            await alerts.raise_alert(
+                f"attack-ok:{typ}:{ip}", "security", "critical", f"{typ} acceptée par le serveur (HTTP {ev['status']}) — {ip}",
+                msg + "\n\nLe serveur a répondu avec succès : vérifiez que la requête a bien été neutralisée.", where,
+            )
         elif sev == "critical":
-            await alerts.raise_alert(f"attack:{typ}:{ip}", "security", "critical", f"{typ} — {ip}", msg, where)
+            # Refusée (4xx/5xx), redirigée ou sans code : visible dans le dashboard seulement
+            await alerts.raise_alert(f"attack:{typ}:{ip}", "security", "critical", f"{typ} — {ip}", msg, where, notify=False)
         elif sev == "high" and is_success(ev["status"]):
             await alerts.raise_alert(
                 f"attack-ok:{typ}:{ip}", "security", "high", f"{typ} acceptée par le serveur (HTTP {ev['status']}) — {ip}",

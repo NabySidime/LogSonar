@@ -6,19 +6,39 @@ let EXPLAIN = {};
 // ===========================================================================
 // MENACES
 // ===========================================================================
+// Filtre par code de réponse : familles (2xx…) puis codes vus sur la période
+const STATUS_FAMILY = { 2: "acceptées", 3: "redirigées", 4: "refusées", 5: "erreur serveur", 1: "information" };
+function statusOptions(byStatus, current) {
+  const fam = {};
+  byStatus.forEach((x) => { if (x.status) fam[x.status[0]] = (fam[x.status[0]] || 0) + x.n; });
+  const none = byStatus.find((x) => !x.status);
+  const opts = [["", "Tous les codes"]];
+  if (fam[2] && fam[3]) opts.push(["2xx,3xx", `2xx et 3xx — acceptées ou redirigées (${fmtNum(fam[2] + fam[3])})`]);
+  Object.keys(fam).sort().forEach((k) => opts.push([`${k}xx`, `${k}xx — ${STATUS_FAMILY[k] || ""} (${fmtNum(fam[k])})`]));
+  byStatus.filter((x) => x.status).forEach((x) => opts.push([x.status, `${x.status} (${fmtNum(x.n)})`]));
+  if (none) opts.push(["none", `Sans code (${fmtNum(none.n)})`]);
+  if (current && !opts.some(([v]) => v === current)) opts.push([current, `${current} (0)`]);
+  return opts.map(([v, l]) => html`<option value="${v}" ${v === current ? raw("selected") : ""}>${l}</option>`);
+}
+
 App.pages.threats = async (view) => {
-  const params = new URLSearchParams(location.hash.split("?")[1] || "");
+  const params = hashParams();
+  const custom = customPeriod();
   const f = { days: Number(params.get("days")) || 7, q: params.get("q") || "", attack_type: params.get("type") || "",
-              ip: params.get("ip") || "", severity: "", container: params.get("container") || "", offset: 0 };
+              ip: params.get("ip") || "", severity: params.get("severity") || "", status: params.get("status") || "",
+              container: params.get("container") || "", offset: 0 };
   setHeader("Menaces", "Attaques détectées dans les logs de vos applications",
-    html`<div class="seg">${[[1, "24 h"], [7, "7 j"], [30, "30 j"]].map(([d, l]) => html`<button class="${d === f.days ? "active" : ""}" data-action="threats-days" data-days="${d}">${l}</button>`)}</div>`);
-  const stats = await GET(`/api/security/stats?days=${f.days}`);
+    periodPicker("days", [[1, "Aujourd'hui"], [7, "7 j"], [30, "30 j"], [90, "90 j"]].map(([d, l]) => [String(d), l]), String(f.days), 90));
+  const stats = await GET(`/api/security/stats?${qs(custom ? { since: custom.from, until: custom.to } : { days: f.days })}`);
   EXPLAIN = stats.explanations;
   const total = stats.by_type.reduce((s, x) => s + x.n, 0);
+  const hourly = stats.timeline.length && stats.timeline[0].hour != null;
+  const severalDays = hourly && stats.timeline[0].day !== stats.timeline[stats.timeline.length - 1].day;
+  const tlLabel = (x) => (hourly ? `${severalDays ? x.day.slice(8, 10) + "/" + x.day.slice(5, 7) + " " : ""}${pad(x.hour)}h` : x.day.slice(8, 10) + "/" + x.day.slice(5, 7));
 
   setHTML(view, html`
     <div class="grid g-main">
-      <div class="card"><div class="card-head"><h3>Attaques par jour</h3><span class="sub">${fmtNum(total)} au total</span></div>
+      <div class="card"><div class="card-head"><h3>Attaques par ${hourly ? "heure" : "jour"}</h3><span class="sub">${fmtNum(total)} au total</span></div>
         <div class="card-body"><div class="chart"><canvas id="ch-days"></canvas></div></div></div>
       <div class="card"><div class="card-head"><h3>Par type</h3></div>
         <div class="card-body">${stats.by_type.length ? html`<div class="hbar">${stats.by_type.slice(0, 8).map((x) => html`
@@ -29,26 +49,28 @@ App.pages.threats = async (view) => {
     <div class="card mt"><div class="card-head"><h3>IP les plus actives</h3><span class="sub">bannissez les récidivistes (pare-feu, Fail2Ban, CrowdSec)</span></div>
       <div class="card-body flush">${stats.top_ips.length ? html`<div class="table-wrap"><table class="table"><thead><tr><th>IP</th><th class="right">Tentatives</th><th class="right">Types</th><th class="right">Acceptées (2xx)</th><th>Dernière</th><th></th></tr></thead>
         <tbody>${stats.top_ips.map((x) => html`<tr><td class="mono strong">${x.ip}</td><td class="right num">${fmtNum(x.n)}</td><td class="right num">${x.types}</td>
-          <td class="right num">${x.success ? html`<span class="badge sev-high">${x.success}</span>` : "0"}</td><td class="small muted">${fmtAgo(x.last_ts)}</td>
+          <td class="right num">${x.success ? html`<a href="#" class="badge sev-high" data-action="threats-ip-ok" data-ip="${x.ip}" title="Voir les requêtes acceptées">${x.success}</a>` : "0"}</td><td class="small muted">${fmtAgo(x.last_ts)}</td>
           <td class="right"><button class="btn sm ghost" data-action="threats-filter" data-key="ip" data-value="${x.ip}">${icon("filter")}Filtrer</button></td></tr>`)}</tbody></table></div>` : empty("Aucune IP", "", "globe")}</div></div>
     <div class="card mt">
       <div class="card-head"><h3>Événements</h3><span class="sub" id="ev-count"></span></div>
       <div class="card-body" style="padding-bottom:10px"><div class="row">
         <input class="input" id="ev-q" placeholder="Rechercher (URL, IP, User-Agent…)" value="${f.q}" style="flex:1;min-width:200px">
         <select class="input" id="ev-type"><option value="">Tous les types</option>${stats.by_type.map((x) => html`<option ${x.attack_type === f.attack_type ? raw("selected") : ""}>${x.attack_type}</option>`)}</select>
-        <select class="input" id="ev-sev"><option value="">Toutes gravités</option>${["critical", "high", "medium", "low"].map((s) => html`<option value="${s}">${SEV[s].label}</option>`)}</select>
+        <select class="input" id="ev-sev"><option value="">Toutes gravités</option>${["critical", "high", "medium", "low"].map((s) => html`<option value="${s}" ${s === f.severity ? raw("selected") : ""}>${SEV[s].label}</option>`)}</select>
+        <select class="input" id="ev-status" title="Code de réponse du serveur">${statusOptions(stats.by_status, f.status)}</select>
         <input class="input" id="ev-ip" placeholder="IP" value="${f.ip}" style="width:150px">
         <button class="btn sm ghost" id="ev-reset">${icon("x")}Réinitialiser</button>
       </div>${f.container ? html`<div class="small muted mt">Conteneur : <span class="tag">${f.container}</span></div>` : ""}</div>
       <div id="ev-table"></div>
     </div>`);
 
-  barChart($("#ch-days"), stats.timeline.map((x) => x.day.slice(8, 10) + "/" + x.day.slice(5, 7)), [{ label: "Attaques", data: stats.timeline.map((x) => x.count), color: "--series-2" }], { xTicks: 15 });
+  barChart($("#ch-days"), stats.timeline.map(tlLabel), [{ label: "Attaques", data: stats.timeline.map((x) => x.count), color: "--series-2" }], { xTicks: 15 });
 
-  const since = Date.now() / 1000 - f.days * 86400;
+  // Même période que les statistiques ci-dessus
+  const since = stats.since, until = custom && custom.to ? stats.until : "";
   let rows = [];
   const load = async () => {
-    const r = await GET(`/api/security/events?${qs({ q: f.q, attack_type: f.attack_type, ip: f.ip, severity: f.severity, container: f.container, since, limit: 50, offset: f.offset })}`);
+    const r = await GET(`/api/security/events?${qs({ q: f.q, attack_type: f.attack_type, ip: f.ip, severity: f.severity, status: f.status, container: f.container, since, until, limit: 50, offset: f.offset })}`);
     rows = r.items;
     $("#ev-count").textContent = `${fmtNum(r.total)} résultat(s)`;
     setHTML($("#ev-table"), r.items.length ? html`<div class="table-wrap"><table class="table"><thead><tr><th>Date</th><th>Gravité</th><th>Type</th><th>IP</th><th>Requête</th><th>Code</th><th>Conteneur</th></tr></thead>
@@ -65,7 +87,8 @@ App.pages.threats = async (view) => {
   bind($("#ev-ip"), "input", (e) => { f.ip = e.target.value.trim(); changed(); });
   bind($("#ev-type"), "change", (e) => { f.attack_type = e.target.value; changed(); });
   bind($("#ev-sev"), "change", (e) => { f.severity = e.target.value; changed(); });
-  bind($("#ev-reset"), "click", () => { location.hash = `#/threats?days=${f.days}`; });
+  bind($("#ev-status"), "change", (e) => { f.status = e.target.value; changed(); });
+  bind($("#ev-reset"), "click", () => { location.hash = `#/threats?${qs(custom ? { from: custom.from, to: custom.to } : { days: f.days })}`; });
   App.actions["ev-page"] = (el) => { f.offset = Math.max(0, f.offset + Number(el.dataset.d)); load(); };
   App.actions["event-open"] = (el) => openEvent(rows[Number(el.dataset.i)]);
   App.actions["threats-filter"] = (el) => {
@@ -73,9 +96,13 @@ App.pages.threats = async (view) => {
     else { f.attack_type = el.dataset.value; $("#ev-type").value = f.attack_type; }
     f.offset = 0; load(); $("#ev-table").scrollIntoView({ behavior: "smooth", block: "start" });
   };
+  App.actions["threats-ip-ok"] = (el) => {
+    f.ip = el.dataset.ip; $("#ev-ip").value = f.ip;
+    f.status = "2xx"; $("#ev-status").value = "2xx";
+    f.offset = 0; load(); $("#ev-table").scrollIntoView({ behavior: "smooth", block: "start" });
+  };
   await load();
 };
-App.actions["threats-days"] = (el) => { location.hash = `#/threats?days=${el.dataset.days}`; };
 
 function openEvent(e) {
   const ex = EXPLAIN[e.attack_type] || EXPLAIN[(e.attack_type || "").split(" (")[0]];
@@ -251,10 +278,16 @@ App.actions["tls-check"] = async () => { await POST("/api/vulns/tls/check"); toa
 // ALERTES
 // ===========================================================================
 let alertRows = {};
+const ALERT_PERIODS = { all: 0, "24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400 };
 App.pages.alerts = async (view) => {
-  const status = new URLSearchParams(location.hash.split("?")[1] || "").get("status") || "active";
-  setHeader("Alertes", "Problèmes détectés sur le serveur, les conteneurs et la sécurité");
-  const r = await GET(`/api/alerts?status=${status}&limit=200`);
+  const params = hashParams();
+  const status = params.get("status") || "active";
+  const period = ALERT_PERIODS[params.get("period")] != null ? params.get("period") : "all";
+  const custom = customPeriod();
+  setHeader("Alertes", "Problèmes détectés sur le serveur, les conteneurs et la sécurité",
+    periodPicker("period", [["all", "Tout"], ["24h", "24 h"], ["7d", "7 j"], ["30d", "30 j"]], period, 90));
+  const range = custom ? { since: custom.from, until: custom.to } : { since: ALERT_PERIODS[period] ? Math.floor(Date.now() / 1000 - ALERT_PERIODS[period]) : "" };
+  const r = await GET(`/api/alerts?${qs({ status, limit: 200, ...range })}`);
   alertRows = {};
   r.items.forEach((a) => (alertRows[a.id] = a));
   const CAT = { security: "Sécurité", host: "Serveur", container: "Conteneur", traffic: "Trafic", vulnerability: "Vulnérabilités", config: "Configuration", tls: "TLS", system: "Système" };
@@ -267,7 +300,7 @@ App.pages.alerts = async (view) => {
       empty(status === "active" ? "Aucune alerte en cours" : "Aucune alerte", status === "active" ? "Tout fonctionne normalement." : "", "circle-check")}</div>`);
   on("alert", () => refresh());
 };
-App.actions["alerts-tab"] = (el) => { location.hash = `#/alerts?status=${el.dataset.status}`; };
+App.actions["alerts-tab"] = (el) => setHashParams({ status: el.dataset.status });
 App.actions["alert-open"] = async (el) => {
   let a = alertRows[el.dataset.id];
   if (!a) {
