@@ -13,7 +13,10 @@ CONTAINER=logsonar
 DEST_ROOT=${1:-./backups}
 STAMP=$(date +%Y-%m-%d_%H%M)
 WORK=$(mktemp -d)
-trap 'rm -rf "$WORK"; docker exec "$CONTAINER" rm -f /tmp/backup.db >/dev/null 2>&1 || true' EXIT
+# Copie temporaire dans le volume de données : /tmp est un tmpfs (système de fichiers en
+# lecture seule) que « docker cp » ne voit pas.
+TMP_DB=/app/data/.backup-tmp.db
+trap 'rm -rf "$WORK"; docker exec "$CONTAINER" rm -f "$TMP_DB" >/dev/null 2>&1 || true' EXIT
 
 mkdir -p "$DEST_ROOT"
 
@@ -21,11 +24,11 @@ mkdir -p "$DEST_ROOT"
 docker exec "$CONTAINER" python -c "
 import sqlite3
 src = sqlite3.connect('/app/data/logsonar.db')
-dst = sqlite3.connect('/tmp/backup.db')
+dst = sqlite3.connect('$TMP_DB')
 src.backup(dst)
 dst.close()
 "
-docker cp "$CONTAINER:/tmp/backup.db" "$WORK/logsonar.db"
+docker cp "$CONTAINER:$TMP_DB" "$WORK/logsonar.db"
 
 # Sans ces clés, les secrets enregistrés (clés API) et les sessions sont illisibles
 docker cp "$CONTAINER:/app/data/.secret_key" "$WORK/.secret_key" 2>/dev/null || true
