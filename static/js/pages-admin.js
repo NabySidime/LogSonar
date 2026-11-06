@@ -19,7 +19,7 @@ function fieldHTML([key, label, type, ph], s) {
   if (type === "secret") {
     const set = s[key + "_set"], unreadable = s[key + "_unreadable"];
     return html`<div class="field"><label>${label}</label><div class="row" style="flex-wrap:nowrap">
-      <input class="input" type="password" autocomplete="off" data-k="${key}" data-secret="1" placeholder="${set ? "•••••••• (configuré — laissez vide pour conserver)" : unreadable ? "Illisible — ressaisissez la valeur" : ph || ""}" style="flex:1${unreadable ? ";border-color:var(--critical)" : ""}">
+      <input class="input" type="password" autocomplete="new-password" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-k="${key}" data-secret="1" placeholder="${set ? "•••••••• (configuré — laissez vide pour conserver)" : unreadable ? "Illisible — ressaisissez la valeur" : ph || ""}" style="flex:1${unreadable ? ";border-color:var(--critical)" : ""}">
       ${set ? html`<button class="btn sm ghost" data-action="secret-clear" data-k="${key}" title="Supprimer">${icon("trash-2")}</button>` : ""}</div>
       ${unreadable ? html`<span class="hint" style="color:var(--critical)">${icon("triangle-alert")} Enregistré, mais chiffré avec une autre clé que celle de ce serveur : LogSonar ne peut plus le lire. Saisissez-le de nouveau puis enregistrez.</span>` : ""}</div>`;
   }
@@ -168,13 +168,28 @@ App.actions["ingest-revoke"] = async () => {
   try { await DEL("/api/settings/ingest/token"); toast("Jeton révoqué."); refresh(); } catch (e) { toast(e.message, "error"); }
 };
 
+// Champs secrets : le navigateur (ou un gestionnaire de mots de passe) peut y injecter
+// le mot de passe de connexion à LogSonar, même avec autocomplete="off". Envoyé tel quel,
+// il remplaçait la clé Brevo à chaque enregistrement. Un secret n'est donc envoyé que
+// s'il a été réellement saisi au clavier, collé ou déposé (un remplissage automatique
+// ne déclenche aucun de ces événements).
+const SECRET_EDIT_KEYS = new Set(["Backspace", "Delete"]);
+const markSecretTyped = (ev) => {
+  const el = ev.target;
+  if (!el || !el.dataset || !el.dataset.secret) return;
+  if (ev.type === "keydown" && ev.key.length !== 1 && !SECRET_EDIT_KEYS.has(ev.key)) return; // Tab, flèches, Entrée...
+  if (ev.type === "keydown" && (ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() !== "v") return; // Ctrl+A, Ctrl+C...
+  el.dataset.typed = "1";
+};
+["keydown", "paste", "drop", "cut"].forEach((t) => document.addEventListener(t, markSecretTyped, true));
+
 App.actions["settings-save"] = async () => {
   const out = {};
   $$("[data-k]").forEach((el) => {
     const k = el.dataset.k;
     if (el.closest("#account")) return;
     if (el.type === "checkbox") out[k] = el.checked;
-    else if (el.dataset.secret) { if (el.value.trim()) out[k] = el.value.trim(); }
+    else if (el.dataset.secret) { if (el.dataset.typed && el.value.trim()) out[k] = el.value.trim(); }
     else if (el.dataset.num) out[k] = Number(el.value);
     else out[k] = el.value.trim();
   });
