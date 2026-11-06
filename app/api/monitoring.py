@@ -221,7 +221,7 @@ async def security_stats(days: int = Query(7, ge=1, le=90), since: Optional[floa
         f"SELECT attack_type, severity, COUNT(*) AS n FROM security_events WHERE {span} GROUP BY attack_type ORDER BY n DESC", period)
     top_ips = await db.fetchall(
         "SELECT ip, COUNT(*) AS n, COUNT(DISTINCT attack_type) AS types, MAX(ts) AS last_ts,"
-        " SUM(CASE WHEN status LIKE '2%' THEN 1 ELSE 0 END) AS success"
+        " SUM(CASE WHEN status LIKE '2%' AND neutral = '' THEN 1 ELSE 0 END) AS success"
         f" FROM security_events WHERE {span} AND ip != '' GROUP BY ip ORDER BY n DESC LIMIT 15", period)
     by_status = await db.fetchall(
         f"SELECT status, COUNT(*) AS n FROM security_events WHERE {span} GROUP BY status ORDER BY status", period)

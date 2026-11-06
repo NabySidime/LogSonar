@@ -213,7 +213,9 @@ async def build(date_str: str) -> Optional[tuple[str, dict]]:
     by_ip = Counter(e["ip"] for e in events if e["ip"])
     by_url = Counter(e["path"].split("?")[0][:120] for e in events if e["path"])
     by_hour_att = Counter(datetime.fromtimestamp(e["ts"]).hour for e in events)
-    successes = [e for e in events if e["status"].startswith("2") and e["severity"] in ("high", "critical")]
+    # Les 2xx qui ne prouvent rien (en-tête non exécuté, page servie normalement) n'en font pas partie
+    successes = [e for e in events if e["status"].startswith("2") and e["severity"] in ("high", "critical")
+                 and not e.get("neutral")]
     body_attacks = sum(1 for e in events if "\nCorps :" in (e["raw"] or ""))
 
     # --- Serveur et trafic, par heure

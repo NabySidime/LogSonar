@@ -178,7 +178,7 @@ def analyze(raw_line: str, container: str, replay: bool = False) -> dict:
         "kind": "app",
         "ip": "", "method": "", "path": "", "status": "", "size": "",
         "ua": "", "referer": "",
-        "attack_type": None, "severity": None, "detail": "",
+        "attack_type": None, "severity": None, "detail": "", "surface": "",
         "raw": line,
     }
 
@@ -202,11 +202,15 @@ def analyze(raw_line: str, container: str, replay: bool = False) -> dict:
         return event
 
     url = normalize(http["path"])
-    hit = match_rules({
+    found_rule = find_rule({
         "url": url,
         "ua": normalize(http["ua"]) if http["ua"] else "",
         "referer": normalize(http["referer"]) if http["referer"] else "",
     })
+    hit = found_rule[:2] if found_rule else None
+    event["surface"] = found_rule[2] if found_rule else ""
+    if hit is None:
+        page_sizes.observe(container, http["method"], http["path"], http["status"], http["size"])
     if hit is None and _open_redirect(url):
         hit = ("Tentative de Redirection Ouverte", "low")
     if hit is None and not replay:
@@ -229,6 +233,67 @@ def analyze(raw_line: str, container: str, replay: bool = False) -> dict:
 
 def is_success(status: str) -> bool:
     return status.isdigit() and 200 <= int(status) < 300
+
+
+# ---------------------------------------------------------------------------
+# Réponse 2xx : succès réel de l'attaque, ou page servie normalement ?
+# ---------------------------------------------------------------------------
+# Un code 2xx dit seulement que la page a été servie. Deux cas fréquents ne prouvent
+# rien : la charge est dans un en-tête que l'application n'exécute pas (Referer,
+# User-Agent), ou la réponse est identique à la page normale (paramètres ignorés,
+# comme une page statique). Ces attaques restent enregistrées et visibles, mais ne
+# sont plus présentées comme « acceptées par le serveur ».
+HEADER_EXPLOITS = {"Tentative Log4Shell (Log4J)"}  # exploitables par un simple en-tête journalisé
+HEADER_NAMES = {"referer": "Referer", "ua": "User-Agent"}
+
+
+class PageSizes:
+    """Taille habituelle des réponses 2xx sans attaque, par conteneur et chemin (mémoire bornée)."""
+    MAX_PATHS = 5000
+    PER_PATH = 5
+
+    def __init__(self) -> None:
+        self._sizes: dict[tuple[str, str], deque] = {}
+
+    @staticmethod
+    def _key(container: str, path: str) -> tuple[str, str]:
+        return container, urlsplit(path).path[:300]
+
+    def observe(self, container: str, method: str, path: str, status: str, size: str) -> None:
+        if method not in ("GET", "HEAD") or not is_success(status) or not size.isdigit():
+            return
+        key = self._key(container, path)
+        q = self._sizes.get(key)
+        if q is None:
+            if len(self._sizes) >= self.MAX_PATHS:
+                self._sizes.pop(next(iter(self._sizes)))  # le plus ancien chemin appris
+            q = self._sizes[key] = deque(maxlen=self.PER_PATH)
+        q.append(int(size))
+
+    def matches_normal(self, container: str, path: str, size: str) -> bool:
+        """Vrai si la réponse a la taille d'une réponse normale de la même page (à 2 % près)."""
+        q = self._sizes.get(self._key(container, path))
+        if not q or not size.isdigit():
+            return False
+        n = int(size)
+        return any(abs(n - s) <= max(64, s * 0.02) for s in q)
+
+
+page_sizes = PageSizes()
+
+
+def neutral_reason(ev: dict) -> str:
+    """Pour une attaque ayant reçu un 2xx : pourquoi ce code ne prouve pas un succès ("" sinon)."""
+    if not is_success(ev.get("status") or ""):
+        return ""
+    surface = ev.get("surface") or ""
+    if surface in HEADER_NAMES and ev.get("attack_type") not in HEADER_EXPLOITS:
+        return (f"La charge malveillante est seulement dans l'en-tête {HEADER_NAMES[surface]}, que l'application "
+                "n'exécute pas : la page demandée a été servie normalement.")
+    if ev.get("method") in ("GET", "HEAD") and page_sizes.matches_normal(ev.get("container", ""), ev.get("path", ""), ev.get("size") or ""):
+        return ("La réponse a la même taille que la page normale : les paramètres injectés ont très probablement "
+                "été ignorés (page fixe). Une injection « à l'aveugle » reste possible : l'événement est conservé.")
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -283,7 +348,7 @@ def analyze_request(req: dict, source: str) -> dict:
     event = {
         "ts": time.time(), "container": source, "kind": "web",
         "ip": ip, "method": method, "path": path, "status": status, "size": "",
-        "ua": ua, "referer": referer, "attack_type": None, "severity": None, "detail": "",
+        "ua": ua, "referer": referer, "attack_type": None, "severity": None, "detail": "", "surface": "",
         "raw": f"{method} {path} -> {status or '?'}",
     }
     if _whitelisted(ip):
@@ -312,6 +377,7 @@ def analyze_request(req: dict, source: str) -> dict:
         return event
     name, severity, surface, m = hit
     event["attack_type"], event["severity"] = name, severity
+    event["surface"] = surface
     if surface == "body":
         # L'extrait ne déborde jamais sur les champs voisins (un mot de passe, par exemple)
         start, end, key = next((s for s in spans if s[0] <= m.start() < s[1]), (0, len(body_text), ""))

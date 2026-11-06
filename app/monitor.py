@@ -14,7 +14,7 @@ from . import settings_store as S
 from .alerts import FROM_DETECTION, alerts
 from .collectors import docker_watch as D
 from .collectors.host import get_sampler
-from .detection.engine import analyze, analyze_request, is_success
+from .detection.engine import analyze, analyze_request, is_success, neutral_reason
 from .detection.parsers import is_private_ip
 from .hub import hub
 from .security import account_limiter, ip_limiter
@@ -164,6 +164,7 @@ class Monitor:
     def _on_attack(self, ev: dict) -> None:
         if ev["kind"] == "web" and self._is_duplicate(ev):
             return
+        ev["neutral"] = neutral_reason(ev)
         self._pending_events.append(ev)
         self._spawn(self._security_alerts(ev))
 
@@ -181,21 +182,26 @@ class Monitor:
         if ev.get("detail"):
             msg += f"\nDétail : {ev['detail']}"
         msg += f"\n\nLog :\n{ev['raw'][:800]}"
+        # Code 2xx qui ne prouve pas un succès (en-tête non exécuté, page servie normalement)
+        neutral = ev.get("neutral") or ""
+        accepted = is_success(ev["status"]) and not neutral
+        if neutral:
+            msg += f"\n\nPourquoi ce n'est pas une attaque réussie : {neutral}"
 
         if typ == "Force brute":
             await alerts.raise_alert(f"brute:{ip}", "security", "high", f"Force brute depuis {ip}", msg, where)
         elif typ == "Flood":
             await alerts.raise_alert(f"flood:{ip}", "security", "warning", f"Volume de requêtes anormal depuis {ip}", msg, where)
-        elif sev == "critical" and is_success(ev["status"]):
+        elif sev == "critical" and accepted:
             # Seule une attaque critique acceptée par le serveur part par email
             await alerts.raise_alert(
                 f"attack-ok:{typ}:{ip}", "security", "critical", f"{typ} acceptée par le serveur (HTTP {ev['status']}) — {ip}",
                 msg + "\n\nLe serveur a répondu avec succès : vérifiez que la requête a bien été neutralisée.", where,
             )
         elif sev == "critical":
-            # Refusée (4xx/5xx), redirigée ou sans code : visible dans le dashboard seulement
+            # Refusée (4xx/5xx), redirigée, sans code ou page servie normalement : dashboard seulement
             await alerts.raise_alert(f"attack:{typ}:{ip}", "security", "critical", f"{typ} — {ip}", msg, where, notify=False)
-        elif sev == "high" and is_success(ev["status"]):
+        elif sev == "high" and accepted:
             await alerts.raise_alert(
                 f"attack-ok:{typ}:{ip}", "security", "high", f"{typ} acceptée par le serveur (HTTP {ev['status']}) — {ip}",
                 msg + "\n\nLe serveur a répondu avec succès : vérifiez que la requête a bien été neutralisée.", where,
@@ -225,10 +231,10 @@ class Monitor:
             return
         batch, self._pending_events = self._pending_events, []
         await db.executemany(
-            "INSERT INTO security_events (ts, container, ip, method, path, status, attack_type, severity, ua, raw)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO security_events (ts, container, ip, method, path, status, attack_type, severity, ua, raw, neutral)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [(e["ts"], e["container"], e["ip"], e["method"], e["path"][:2000], e["status"], e["attack_type"],
-              e["severity"], e["ua"][:500], e["raw"][:4000]) for e in batch],
+              e["severity"], e["ua"][:500], e["raw"][:4000], e.get("neutral") or "") for e in batch],
         )
 
     async def _flush_loop(self) -> None:

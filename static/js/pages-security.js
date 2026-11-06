@@ -108,7 +108,10 @@ function openEvent(e) {
   const ex = EXPLAIN[e.attack_type] || EXPLAIN[(e.attack_type || "").split(" (")[0]];
   openOverlay({
     title: e.attack_type, sub: fmtDate(e.ts),
-    body: html`<div class="row">${sevBadge(e.severity)}${e.status && e.status.startsWith("2") && ["high", "critical"].includes(e.severity) ? html`<span class="badge sev-critical">${icon("triangle-alert")}Requête acceptée par le serveur</span>` : ""}</div>
+    body: html`<div class="row">${sevBadge(e.severity)}${e.status && e.status.startsWith("2") && ["high", "critical"].includes(e.severity) ? (e.neutral
+      ? html`<span class="badge sev-info">${icon("shield-check")}Page servie normalement</span>`
+      : html`<span class="badge sev-critical">${icon("triangle-alert")}Requête acceptée par le serveur</span>`) : ""}</div>
+    ${e.neutral ? html`<p class="small muted" style="margin:8px 0 0">${e.neutral}</p>` : ""}
       ${ex ? html`<div class="callout info">${icon("lightbulb")}<div><b>De quoi s'agit-il ?</b><br>${ex.what}<br><br><b>Que faire ?</b><br>${ex.fix}</div></div>` : ""}
       <dl class="kv"><dt>IP source</dt><dd class="mono">${e.ip || "—"}</dd><dt>Conteneur</dt><dd class="mono">${e.container}</dd>
         <dt>Requête</dt><dd class="mono break">${e.method} ${e.path || "—"}</dd><dt>Réponse</dt><dd class="mono">${e.status || "—"}</dd>

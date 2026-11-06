@@ -18,7 +18,7 @@ from . import config
 _db: Optional[aiosqlite.Connection] = None
 _write_lock = asyncio.Lock()
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -55,7 +55,8 @@ CREATE TABLE IF NOT EXISTS security_events (
     attack_type TEXT NOT NULL DEFAULT '',
     severity    TEXT NOT NULL DEFAULT 'medium',
     ua          TEXT NOT NULL DEFAULT '',
-    raw         TEXT NOT NULL DEFAULT ''
+    raw         TEXT NOT NULL DEFAULT '',
+    neutral     TEXT NOT NULL DEFAULT ''  -- code 2xx qui ne prouve pas un succès : pourquoi
 );
 CREATE INDEX IF NOT EXISTS idx_sec_ts ON security_events (ts);
 CREATE INDEX IF NOT EXISTS idx_sec_ip ON security_events (ip);
@@ -166,6 +167,7 @@ async def init_db() -> None:
     await _db.execute("PRAGMA busy_timeout=5000")
     await _migrate_from_v1()
     await _db.executescript(SCHEMA)
+    await _add_missing_columns()
     await _db.execute(
         "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),)
     )
@@ -223,6 +225,13 @@ async def executemany(sql: str, rows: list[tuple]) -> None:
     async with _write_lock:
         await conn().executemany(sql, rows)
         await conn().commit()
+
+
+async def _add_missing_columns() -> None:
+    """Colonnes ajoutées après coup : CREATE TABLE IF NOT EXISTS ne modifie pas une table existante."""
+    cols = {r[1] for r in await (await conn().execute("PRAGMA table_info(security_events)")).fetchall()}
+    if "neutral" not in cols:  # v4
+        await conn().execute("ALTER TABLE security_events ADD COLUMN neutral TEXT NOT NULL DEFAULT ''")
 
 
 # ---------------------------------------------------------------------------
