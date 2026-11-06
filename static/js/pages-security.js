@@ -140,7 +140,7 @@ App.pages.vulns = async (view) => {
     <div class="grid g-4">
       <div class="card kpi"><div class="label">${icon("octagon-alert")}Critiques</div><div class="value" style="color:var(--critical)">${fmtNum(v.critical)}</div><div class="foot">à corriger en priorité</div></div>
       <div class="card kpi"><div class="label">${icon("triangle-alert")}Élevées</div><div class="value">${fmtNum(v.high)}</div><div class="foot">${fmtNum(v.medium)} moyennes · ${fmtNum(v.low)} faibles</div></div>
-      <div class="card kpi"><div class="label">${icon("wrench")}Corrigeables</div><div class="value">${fmtNum(s.fixable)}</div><div class="foot">une version corrigée existe</div></div>
+      <div class="card kpi"><div class="label">${icon("wrench")}Corrigeables</div><div class="value">${fmtNum(s.fixable)}</div><div class="foot">${s.vendor_wait ? `par vous · ${fmtNum(s.vendor_wait)} en attente de l'éditeur` : "une version corrigée existe"}</div></div>
       <div class="card kpi"><div class="label">${icon("package")}Paquets analysés</div><div class="value">${fmtNum(s.packages_total)}</div><div class="foot">scan ${fmtAgo(scan.finished_ts)} · ${s.duration} s</div></div>
     </div>
     ${s.errors && s.errors.length ? html`<div class="callout warn mt">${icon("triangle-alert")}<div>${s.errors.join(" · ")}</div></div>` : ""}
@@ -257,10 +257,24 @@ App.actions["config-accept"] = async (el) => {
   } catch (e) { toast(e.message, "error"); }
 };
 
+// Qui peut appliquer les correctifs d'une cible (voir app/vuln/freshness.py)
+const IMAGE_STATUS = {
+  host: ["sev-info", "server", "Serveur", "Correctifs : mise à jour des paquets du serveur (apt)."],
+  local: ["sev-info", "hammer", "Construite ici", "Correctifs : reconstruisez l'image (docker compose build --pull)."],
+  latest: ["sev-good", "check", "Dernière version", "Vous avez la dernière image publiée par l'éditeur : ses failles corrigeables attendent sa prochaine version."],
+  outdated: ["sev-warning", "download", "Version plus récente", "L'éditeur a publié une image plus récente pour ce tag : tirez-la (docker compose pull) pour appliquer ses correctifs."],
+  unknown: ["", "help-circle", "Non vérifiée", "Registre injoignable ou privé : les failles corrigeables sont comptées comme à corriger."],
+};
+const imageStatusBadge = (st) => {
+  const [cls, ic, label, title] = IMAGE_STATUS[st] || IMAGE_STATUS.unknown;
+  return html`<span class="badge ${cls}" title="${title}">${icon(ic)}${label}</span>`;
+};
+
 function targetsTab(el, s) {
-  setHTML(el, html`<div class="card"><div class="card-body flush"><div class="table-wrap"><table class="table"><thead><tr><th>Cible</th><th>Système</th><th>Sources</th><th class="right">Paquets</th><th>Vulnérabilités</th></tr></thead>
+  setHTML(el, html`<div class="card"><div class="card-body flush"><div class="table-wrap"><table class="table"><thead><tr><th>Cible</th><th>Système</th><th>Sources</th><th class="right">Paquets</th><th>Image</th><th>Vulnérabilités</th></tr></thead>
     <tbody>${s.targets.map((t) => html`<tr><td><div class="strong mono">${t.name}</div>${t.image ? html`<div class="tiny muted mono">${t.image}</div>` : ""}</td><td class="small">${t.os || "—"}</td>
       <td class="small text-2">${t.sources.length ? t.sources.join(" · ") : html`<span class="muted">aucun gestionnaire de paquets reconnu</span>`}</td><td class="right num">${fmtNum(t.packages)}</td>
+      <td>${imageStatusBadge(t.image_status || (t.kind === "host" ? "host" : "unknown"))}</td>
       <td><div class="row">${["critical", "high", "medium"].map((k) => (t.vulns[k] ? html`<span class="badge sev-${k}">${t.vulns[k]} ${SEV[k].label.toLowerCase()}</span>` : ""))}${!Object.keys(t.vulns).length ? html`<span class="badge sev-good">${icon("check")}Aucune</span>` : ""}</div></td></tr>`)}</tbody></table></div></div></div>
     <p class="small muted mt">Formats lus : paquets Debian/Ubuntu (dpkg), Alpine (apk), Python (site-packages), Node.js (package-lock.json). Les binaires Go/Java et les images Red Hat ne sont pas encore analysés.</p>`);
 }

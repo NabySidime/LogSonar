@@ -126,6 +126,11 @@ def inspect(cid: str) -> dict:
     return state.client().api.inspect_container(cid)
 
 
+def inspect_image(image_id: str) -> dict:
+    """Lecture seule (IMAGES=1 dans docker-socket-proxy) : RepoDigests, date de création..."""
+    return state.client().api.inspect_image(image_id)
+
+
 # ---------------------------------------------------------------------------
 # Lecture des logs
 # ---------------------------------------------------------------------------

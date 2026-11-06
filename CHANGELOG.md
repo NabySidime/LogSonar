@@ -1,5 +1,14 @@
 # Historique des versions
 
+## Prochaine version
+
+### Améliorations
+- **Attaques « acceptées » sans fausses alertes** : un code 2xx ne suffit plus. Une charge seulement dans l'en-tête Referer ou User-Agent (sauf Log4Shell), ou une réponse de la taille de la page normale (paramètres ignorés), reste visible dans le tableau de bord avec l'explication, mais ne part plus par email et sort des « réponses positives » du rapport.
+- **Score : ce que vous pouvez corriger, et ce qui attend l'éditeur** : chaque image est comparée à la dernière version publiée sur son registre (lecture seule). Les failles d'une image d'éditeur déjà à jour (mailcow, par exemple) sont « en attente d'une nouvelle image de l'éditeur » et pèsent aussi peu que les failles sans correctif. Une image plus récente disponible est signalée dans « Cibles analysées ». L'alerte « vulnérabilités critiques » ne compte plus que les failles à corriger.
+
+### Corrections
+- **Paramètres** : la clé API Brevo n'est plus écrasée par le remplissage automatique du navigateur ou d'un gestionnaire de mots de passe lors d'un enregistrement.
+
 ## 2.0.0 — refonte complète
 
 LogSonar devient un outil de surveillance générique pour **n'importe quel serveur Docker**, et plus seulement pour Tikipay.

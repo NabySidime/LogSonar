@@ -14,7 +14,7 @@ from .. import settings_store as S
 from ..alerts import alerts
 from ..collectors import docker_watch as D
 from ..hub import hub
-from . import audit, inventory
+from . import audit, freshness, inventory
 from .osv import SEV_ORDER, OSVClient, fixed_version, only_packages, severity_of, slim_vuln
 
 
@@ -91,6 +91,7 @@ async def _scan(scan_id: int, osv: OSVClient) -> dict:
         errors.append(f"Docker inaccessible : {type(e).__name__}")
 
     by_image: dict[str, dict] = {}
+    image_refs: dict[str, tuple[str, list[str], dict]] = {}  # id d'image -> (référence, RepoDigests, étiquettes)
     for i, c in enumerate(containers):
         scan_state.update(f"Inventaire : {c['name']}", 5 + int(35 * i / max(len(containers), 1)))
         try:
@@ -105,15 +106,33 @@ async def _scan(scan_id: int, osv: OSVClient) -> dict:
             except Exception as e:
                 errors.append(f"{c['name']} : inventaire impossible ({type(e).__name__})")
                 by_image[image_id] = {"os": {}, "packages": [], "sources": []}
+        if image_id not in image_refs:
+            try:
+                img = await D.state.run(D.inspect_image, image_id)
+            except Exception:
+                img = None  # inconnu : ne pas conclure « construite ici »
+            if img is not None:
+                image_refs[image_id] = ((attrs.get("Config") or {}).get("Image") or c["image"],
+                                        img.get("RepoDigests") or [], (img.get("Config") or {}).get("Labels") or {})
         inv = by_image[image_id]
-        targets.append({"name": c["name"], "kind": "container", "image": c["image"], **inv})
+        targets.append({"name": c["name"], "kind": "container", "image": c["image"], "image_id": image_id, **inv})
+
+    # Images d'éditeurs déjà à jour : leurs correctifs ne dépendent pas de l'utilisateur
+    scan_state.update("Versions des images", 41)
+    try:
+        image_status = await freshness.statuses(image_refs)
+    except Exception as e:
+        image_status = {}
+        errors.append(f"Versions des images : vérification impossible ({type(e).__name__})")
+    for t in targets:
+        t["image_status"] = image_status.get(t.get("image_id", ""), freshness.UNKNOWN)
 
     # 2. Serveur hôte
     if config.SCAN_HOST_PACKAGES:
         scan_state.update("Inventaire du serveur", 42)
         host_inv = await asyncio.to_thread(inventory.host_inventory)
         if host_inv:
-            targets.append({"name": "serveur", "kind": "host", "image": "", **host_inv})
+            targets.append({"name": "serveur", "kind": "host", "image": "", "image_status": "host", **host_inv})
         config_findings.extend(await asyncio.to_thread(audit.audit_host))
 
     # 3. Vulnérabilités connues (OSV)
@@ -152,8 +171,10 @@ async def _scan(scan_id: int, osv: OSVClient) -> dict:
     sev_total: Counter = Counter()
     per_target: dict[str, Counter] = defaultdict(Counter)
     fix_sev: Counter = Counter()
-    fixable = 0
+    vendor_sev: Counter = Counter()   # correctif publié, mais l'image de l'éditeur est déjà la dernière
+    fixable = vendor_wait = 0
     for t in targets:
+        actionable = t["kind"] == "host" or t.get("image_status") in freshness.ACTIONABLE
         for p in t["packages"]:
             # Une même faille est souvent publiée sous plusieurs identifiants
             # (GHSA, PYSEC, CVE) : on la compte une seule fois, en préférant l'avis GHSA.
@@ -174,9 +195,12 @@ async def _scan(scan_id: int, osv: OSVClient) -> dict:
                              vid, ",".join(dict.fromkeys(aliases)), sev, score, summary, fix))
                 sev_total[sev] += 1
                 per_target[t["name"]][sev] += 1
-                if fix:
+                if fix and actionable:
                     fixable += 1
                     fix_sev[sev] += 1
+                elif fix:
+                    vendor_wait += 1
+                    vendor_sev[sev] += 1
     await db.executemany(
         "INSERT INTO vuln_findings (scan_id, target, target_kind, image, ecosystem, package, version, vuln_id,"
         " aliases, severity, score, summary, fixed_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows,
@@ -191,7 +215,8 @@ async def _scan(scan_id: int, osv: OSVClient) -> dict:
         "duration": round(time.time() - t0, 1),
         "targets": [
             {"name": t["name"], "kind": t["kind"], "image": t["image"], "os": t["os"].get("name", ""),
-             "packages": len(t["packages"]), "sources": t["sources"], "vulns": dict(per_target.get(t["name"], {}))}
+             "packages": len(t["packages"]), "sources": t["sources"], "vulns": dict(per_target.get(t["name"], {})),
+             "image_status": t.get("image_status", freshness.UNKNOWN)}
             for t in targets
         ],
         "packages_total": len(pkgs),
@@ -199,6 +224,8 @@ async def _scan(scan_id: int, osv: OSVClient) -> dict:
         "vulns_by_severity": {k: sev_total.get(k, 0) for k in SEV_ORDER},
         "fixable": fixable,
         "fixable_by_severity": {k: fix_sev.get(k, 0) for k in SEV_ORDER},
+        "vendor_wait": vendor_wait,
+        "vendor_wait_by_severity": {k: vendor_sev.get(k, 0) for k in SEV_ORDER},
         "config_total": len(config_findings),
         "config_by_severity": dict(cfg_sev),
         "errors": errors,
@@ -206,12 +233,15 @@ async def _scan(scan_id: int, osv: OSVClient) -> dict:
 
 
 async def _raise_alerts(summary: dict) -> None:
-    crit = summary["vulns_by_severity"].get("critical", 0)
+    # Seules les failles critiques que l'utilisateur peut corriger lui-même : celles sans
+    # correctif ou en attente d'une image de l'éditeur ne demandent aucune action.
+    crit = (summary.get("fixable_by_severity") or summary["vulns_by_severity"]).get("critical", 0)
     if crit:
         await alerts.raise_alert(
             "vuln:critical", "vulnerability", "high",
-            f"{crit} vulnérabilité(s) critique(s) détectée(s)",
-            "Le dernier scan a trouvé des paquets avec des failles critiques connues. "
+            f"{crit} vulnérabilité(s) critique(s) à corriger",
+            "Le dernier scan a trouvé des failles critiques pour lesquelles une version corrigée est disponible : "
+            "mise à jour du serveur, reconstruction de vos images ou image plus récente de l'éditeur. "
             "Ouvrez l'onglet Vulnérabilités pour voir les versions corrigées.",
             "Scan de sécurité",
         )

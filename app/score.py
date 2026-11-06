@@ -27,20 +27,33 @@ def compute(scan_summary: Optional[dict], open_alerts: list[dict], host: dict, t
         f = scan_summary.get("fixable_by_severity")
         if f is None:  # scan d'une version précédente : tout compte comme corrigeable
             f = v
+        # Correctif publié, mais l'image vient d'un éditeur et c'est déjà sa dernière
+        # version : seul l'éditeur peut publier une image corrigée. Comme une faille
+        # sans correctif, elle pèse peu (absent d'un scan ancien : 0).
+        w = scan_summary.get("vendor_wait_by_severity") or {}
         # Par gravité : (poids corrigeable, plafond, poids sans correctif, plafond sans correctif).
         # Les failles sans correctif partagent le plafond de la gravité et ne
         # prennent que la place laissée : le score n'est jamais plus bas qu'avant.
         rules = {"critical": (2.5, 25, 0.25, 5), "high": (0.5, 15, 0.02, 3), "medium": (0.1, 5, 0, 0)}
         labels = {"critical": "critique(s)", "high": "élevée(s)", "medium": "moyenne(s)"}
-        hints = {"critical": "Mettez à jour les paquets concernés (onglet Vulnérabilités).",
+        hints = {"critical": "Mettez à jour le serveur, reconstruisez vos images ou tirez la version plus récente "
+                             "des images d'éditeurs (onglet Vulnérabilités, Cibles analysées).",
                  "high": "Reconstruisez les images avec des versions de base récentes.", "medium": ""}
         for sev, (w_fix, cap, w_nofix, cap_nofix) in rules.items():
             n_fix = f.get(sev, 0)
-            n_nofix = max(v.get(sev, 0) - n_fix, 0)
+            n_wait = w.get(sev, 0)
+            n_nofix = max(v.get(sev, 0) - n_fix - n_wait, 0)
             p_fix = _pen(n_fix, w_fix, cap)
             add(f"{n_fix} vulnérabilité(s) {labels[sev]} corrigeable(s)", p_fix, hints[sev])
+            # Les failles qui n'attendent aucune action partagent le reste du plafond :
+            # le score n'est jamais plus bas qu'en les comptant comme corrigeables.
+            left = min(cap - p_fix, cap_nofix)
+            p_wait = min(_pen(n_wait, w_nofix, cap_nofix), left)
+            add(f"{n_wait} vulnérabilité(s) {labels[sev]} en attente d'une nouvelle image de l'éditeur", p_wait,
+                "Vous avez déjà la dernière version de ces images : le correctif arrivera avec la prochaine. "
+                "Mettez à jour l'application concernée régulièrement (ex. mailcow : update.sh).")
             add(f"{n_nofix} vulnérabilité(s) {labels[sev]} sans correctif publié",
-                min(_pen(n_nofix, w_nofix, cap_nofix), cap - p_fix),
+                min(_pen(n_nofix, w_nofix, cap_nofix), left - p_wait),
                 "Aucune version corrigée n'existe encore : refaites les mises à jour régulièrement.")
         c = config_counts or scan_summary.get("config_by_severity") or {}
         add(f"{c.get('critical', 0)} problème(s) de configuration critique(s)", _pen(c.get("critical", 0), 10, 20),
