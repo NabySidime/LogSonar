@@ -46,8 +46,14 @@ async def put_settings(values: dict[str, Any], _: dict = Depends(require_admin))
     for key, value in values.items():
         if key not in S.DEFAULTS or key in ("muted_containers", "ingest_token", "accepted_config"):
             continue
-        if key in S.SECRET_KEYS and value in (None, "__keep__"):
-            continue  # champ secret laissé vide dans le formulaire : on garde la valeur actuelle
+        if key in S.SECRET_KEYS:
+            # Un secret ne s'efface que sur demande explicite (bouton « Supprimer ») : une valeur
+            # vide envoyée par erreur effaçait la clé Brevo à chaque enregistrement.
+            if value in (None, "", "__keep__") or (isinstance(value, str) and not value.strip()):
+                continue  # champ secret laissé vide dans le formulaire : on garde la valeur actuelle
+            if value == "__clear__":
+                clean[key] = ""
+                continue
         if key in _INT_RANGES:
             try:
                 value = int(value)

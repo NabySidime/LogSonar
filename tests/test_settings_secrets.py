@@ -56,9 +56,9 @@ def test_save_without_key_keeps_it(client):
     assert r.json()["brevo_api_key_set"] is True
 
 
-def test_keep_marker_and_null_keep_it(client):
+def test_keep_marker_null_and_empty_keep_it(client):
     client.put("/api/settings", json={**FORM, "brevo_api_key": KEY})
-    for value in ("__keep__", None):
+    for value in ("__keep__", None, "", "   "):
         assert client.put("/api/settings", json={**FORM, "brevo_api_key": value}).status_code == 200
         assert stored_key() == KEY
 
@@ -72,9 +72,18 @@ def test_browser_autofilled_password_is_refused_and_key_kept(client):
     assert S.get("cpu_warn") != 70  # rien n'est enregistré quand une valeur est refusée
 
 
+def test_empty_value_from_the_delete_button_keeps_the_key(client):
+    # Le bug : le bouton « Supprimer » (data-k, valeur vide) était lu par l'enregistrement
+    client.put("/api/settings", json={**FORM, "brevo_api_key": KEY})
+    r = client.put("/api/settings", json={**FORM, "cpu_warn": 70, "brevo_api_key": ""})
+    assert r.status_code == 200
+    assert stored_key() == KEY
+    assert r.json()["brevo_api_key_set"] is True
+
+
 def test_explicit_clear_still_works(client):
     client.put("/api/settings", json={**FORM, "brevo_api_key": KEY})
-    assert client.put("/api/settings", json={"brevo_api_key": ""}).status_code == 200  # bouton « Supprimer »
+    assert client.put("/api/settings", json={"brevo_api_key": "__clear__"}).status_code == 200  # bouton « Supprimer »
     assert stored_key() == ""
 
 

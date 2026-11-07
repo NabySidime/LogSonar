@@ -185,7 +185,9 @@ const markSecretTyped = (ev) => {
 
 App.actions["settings-save"] = async () => {
   const out = {};
-  $$("[data-k]").forEach((el) => {
+  // Seuls les champs du formulaire : le bouton « Supprimer » d'un secret porte aussi
+  // data-k, et sa valeur vide effaçait la clé Brevo à chaque enregistrement.
+  $$("input[data-k], select[data-k], textarea[data-k]").forEach((el) => {
     const k = el.dataset.k;
     if (el.closest("#account")) return;
     if (el.type === "checkbox") out[k] = el.checked;
@@ -198,7 +200,7 @@ App.actions["settings-save"] = async () => {
 };
 App.actions["secret-clear"] = async (el) => {
   if (!(await confirmDialog("Supprimer ce secret ?", "Le canal correspondant sera désactivé.", "Supprimer"))) return;
-  await PUT("/api/settings", { [el.dataset.k]: "" });
+  await PUT("/api/settings", { [el.dataset.k]: "__clear__" });
   toast("Secret supprimé."); refresh();
 };
 App.actions["test-channel"] = async (el, ev) => {
