@@ -159,8 +159,11 @@ def public_view() -> dict[str, Any]:
     out: dict[str, Any] = {}
     for key in DEFAULTS:
         if key in SECRET_KEYS:
-            out[key + "_set"] = bool(get(key))
+            value = str(get(key) or "")
+            out[key + "_set"] = bool(value)
             out[key + "_unreadable"] = key in _unreadable
+            # 4 derniers caractères, pour voir qu'un secret est bien conservé (jamais pour une URL)
+            out[key + "_hint"] = value[-4:] if len(value) >= 16 and not value.startswith("http") else ""
         else:
             out[key] = get(key)
     return out

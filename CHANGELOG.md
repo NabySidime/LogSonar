@@ -8,6 +8,9 @@
 
 ### Corrections
 - **Paramètres** : la clé API Brevo n'est plus écrasée par le remplissage automatique du navigateur ou d'un gestionnaire de mots de passe lors d'un enregistrement.
+- **Paramètres** : une valeur qui n'est pas une clé Brevo (`xkeysib-…`) ou un token Telegram est refusée avec un message, au lieu de remplacer le secret enregistré ; le champ affiche les 4 derniers caractères du secret conservé.
+- **Mises à jour** : les fichiers JavaScript et CSS sont revalidés à chaque chargement ; le navigateur pouvait garder l'ancienne version plusieurs heures après une mise à jour.
+- **Sauvegarde** (`scripts/backup.sh`) : fonctionne avec le système de fichiers en lecture seule du conteneur.
 
 ## 2.0.0 — refonte complète
 

@@ -17,9 +17,9 @@ const CHANNELS = [
 function fieldHTML([key, label, type, ph], s) {
   if (type === "bool") return html`<label class="switch"><input type="checkbox" data-k="${key}" ${s[key] ? raw("checked") : ""}> ${label}</label>`;
   if (type === "secret") {
-    const set = s[key + "_set"], unreadable = s[key + "_unreadable"];
+    const set = s[key + "_set"], unreadable = s[key + "_unreadable"], hint = s[key + "_hint"];
     return html`<div class="field"><label>${label}</label><div class="row" style="flex-wrap:nowrap">
-      <input class="input" type="password" autocomplete="new-password" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-k="${key}" data-secret="1" placeholder="${set ? "•••••••• (configuré — laissez vide pour conserver)" : unreadable ? "Illisible — ressaisissez la valeur" : ph || ""}" style="flex:1${unreadable ? ";border-color:var(--critical)" : ""}">
+      <input class="input" type="password" autocomplete="new-password" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-k="${key}" data-secret="1" placeholder="${set ? `Enregistrée${hint ? ` (se termine par ${hint})` : ""} - laissez vide pour la conserver` : unreadable ? "Illisible — ressaisissez la valeur" : ph || ""}" style="flex:1${unreadable ? ";border-color:var(--critical)" : ""}">
       ${set ? html`<button class="btn sm ghost" data-action="secret-clear" data-k="${key}" title="Supprimer">${icon("trash-2")}</button>` : ""}</div>
       ${unreadable ? html`<span class="hint" style="color:var(--critical)">${icon("triangle-alert")} Enregistré, mais chiffré avec une autre clé que celle de ce serveur : LogSonar ne peut plus le lire. Saisissez-le de nouveau puis enregistrez.</span>` : ""}</div>`;
   }

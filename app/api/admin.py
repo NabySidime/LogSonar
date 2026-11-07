@@ -19,6 +19,13 @@ router = APIRouter(prefix="/api", tags=["admin"])
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _URL_FIELDS = {"discord_webhook", "slack_webhook", "webhook_url"}
+_SECRET_FORMATS = {
+    "brevo_api_key": (re.compile(r"^xkeysib-[A-Za-z0-9-]{20,}$"),
+                      "Clé API Brevo invalide : elle commence par « xkeysib- » (Brevo > SMTP & API > Clés API). "
+                      "Si vous ne l'avez pas modifiée, votre navigateur a peut-être rempli ce champ tout seul : videz-le."),
+    "telegram_bot_token": (re.compile(r"^\d{5,}:[A-Za-z0-9_-]{20,}$"),
+                           "Token Telegram invalide (format « 123456789:ABC… » donné par @BotFather)."),
+}
 _INT_RANGES = {
     "cpu_warn": (10, 100), "cpu_crit": (10, 100), "mem_warn": (10, 100), "mem_crit": (10, 100),
     "disk_warn": (10, 100), "disk_crit": (10, 100), "metric_duration_min": (1, 60),
@@ -58,6 +65,11 @@ async def put_settings(values: dict[str, Any], _: dict = Depends(require_admin))
             if not all(_EMAIL_RE.match(a.strip()) for a in str(value).split(",") if a.strip()):
                 errors.append("email_to : adresse invalide")
                 continue
+        # Un secret mal formé est refusé plutôt qu'enregistré : un mot de passe glissé dans
+        # le champ par le navigateur remplaçait sinon la clé en silence.
+        if key in _SECRET_FORMATS and value and not _SECRET_FORMATS[key][0].match(str(value).strip()):
+            errors.append(_SECRET_FORMATS[key][1])
+            continue
         if key == "brevo_sender" and value and not _EMAIL_RE.match(str(value)):
             errors.append("brevo_sender : adresse invalide")
             continue

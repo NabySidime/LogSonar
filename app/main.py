@@ -64,6 +64,11 @@ async def security_headers(request: Request, call_next):
         response.headers["X-Frame-Options"] = "DENY"
     if request.url.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store"
+    elif request.url.path.startswith(("/static/js/", "/static/css/")):
+        # Sans consigne, le navigateur garde sa copie plusieurs heures (cache heuristique) :
+        # une mise à jour de LogSonar ne lui parvenait pas. « no-cache » le fait revalider
+        # à chaque chargement (ETag : réponse 304 vide si rien n'a changé).
+        response.headers["Cache-Control"] = "no-cache"
     if security.is_https(request):
         response.headers["Strict-Transport-Security"] = "max-age=31536000"
     return response
