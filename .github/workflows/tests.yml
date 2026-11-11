@@ -12,10 +12,21 @@ jobs:
   pytest:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt pytest
-      - run: pytest -q
+      - name: pytest
+        shell: bash
+        run: |
+          set +e
+          python -m pytest -q -rfE 2>&1 | tee pytest.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            # Fin du rapport dans le résumé de la vérification (visible sans ouvrir le journal)
+            msg=$(tail -n 40 pytest.log | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::error title=pytest a échoué (code $status)::${msg}"
+          fi
+          exit "$status"
