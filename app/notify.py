@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Naby Sidime. LogSonar : https://github.com/NabySidime/LogSonar
 """
 Canaux de notification : email (Brevo), Discord, Slack, Telegram, webhook JSON.
 Chaque canal est indépendant : l'échec de l'un n'empêche pas les autres.

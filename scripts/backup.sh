@@ -1,4 +1,6 @@
 #!/usr/bin/env sh
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Naby Sidime. LogSonar : https://github.com/NabySidime/LogSonar
 # Sauvegarde de LogSonar : base de données (copie cohérente, sans arrêt),
 # clés de chiffrement et rapports.
 #

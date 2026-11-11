@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Naby Sidime. LogSonar : https://github.com/NabySidime/LogSonar
 """
 Diagnostic : mémoire consommée par chaque étape du scan de sécurité.
 

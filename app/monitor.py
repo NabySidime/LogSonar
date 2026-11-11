@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Naby Sidime. LogSonar : https://github.com/NabySidime/LogSonar
 """
 Orchestrateur : relie logs, métriques, événements Docker, alertes et tâches planifiées.
 """

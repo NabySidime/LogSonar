@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Naby Sidime. LogSonar : https://github.com/NabySidime/LogSonar
 """
 Authentification : bcrypt, session JWT en cookie HttpOnly, 2FA TOTP (application
 d'authentification), limitation des tentatives, contrôle d'accès par rôle.

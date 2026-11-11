@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Naby Sidime. LogSonar : https://github.com/NabySidime/LogSonar
 // Applique le thème mémorisé avant l'affichage (évite le flash clair/sombre)
 (function () {
   try {

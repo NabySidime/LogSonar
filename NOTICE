@@ -1,0 +1,10 @@
+LogSonar
+Copyright (c) 2026 Naby Sidime
+https://github.com/NabySidime/LogSonar
+
+Ce logiciel est distribué sous licence MIT (voir LICENSE). Toute copie ou
+version modifiée doit conserver cette mention de copyright et la licence.
+
+Composants tiers inclus (static/vendor/), sous leur propre licence :
+- Chart.js 4.4.0 : licence MIT, (c) Chart.js Contributors
+- Lucide 1.27.0 : licence ISC, (c) Lucide Contributors

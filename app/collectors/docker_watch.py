@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Naby Sidime. LogSonar : https://github.com/NabySidime/LogSonar
 """
 Surveillance Docker : lecture des logs, événements (crash, OOM, santé),
 statistiques de ressources et occupation disque.

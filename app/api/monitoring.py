@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Naby Sidime. LogSonar : https://github.com/NabySidime/LogSonar
 """Données de surveillance : vue d'ensemble, serveur, conteneurs, trafic, menaces, alertes."""
 from __future__ import annotations
 

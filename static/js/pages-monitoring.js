@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Naby Sidime. LogSonar : https://github.com/NabySidime/LogSonar
 /* LogSonar — pages de surveillance : vue d'ensemble, serveur, conteneurs, trafic, logs */
 "use strict";
 

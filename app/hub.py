@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Naby Sidime. LogSonar : https://github.com/NabySidime/LogSonar
 """Diffusion temps réel vers les navigateurs connectés (WebSocket)."""
 from __future__ import annotations
 

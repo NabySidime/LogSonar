@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Naby Sidime. LogSonar : https://github.com/NabySidime/LogSonar
 """
 Score de sécurité global (0-100) et sa justification, point par point.
 Le but n'est pas la précision scientifique mais de montrer où agir en premier.

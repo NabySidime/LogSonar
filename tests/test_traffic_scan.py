@@ -25,7 +25,7 @@ def add(tr, n, ip, status, attack=None):
 
 def legit(tr, n, status="200"):
     for i in range(n):
-        add(tr, 1, f"41.223.{i // 250}.{i % 250 + 1}", status)
+        add(tr, 1, f"93.184.{i // 250}.{i % 250 + 1}", status)
 
 
 def evaluate(monkeypatch, tr, minutes=1):
@@ -87,7 +87,7 @@ def test_outage_during_a_scan_still_notified(monkeypatch):
 def test_errors_of_unflagged_single_ip_still_count(monkeypatch):
     # Une IP qui n'attaque pas et n'est pas bloquée : on ne l'excuse pas
     tr = Traffic()
-    add(tr, 40, "41.223.51.165", "500")
+    add(tr, 40, "93.184.216.34", "500")
     calls = evaluate(monkeypatch, tr)
     assert ("traffic:errors", "high", True) in calls
 

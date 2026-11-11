@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Naby Sidime. LogSonar : https://github.com/NabySidime/LogSonar
 """
 Client OSV.dev (base de vulnérabilités ouverte de Google : Debian, Ubuntu,
 Alpine, PyPI, npm, GitHub Advisories...) et calcul des scores CVSS v3.

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Naby Sidime. LogSonar : https://github.com/NabySidime/LogSonar
 """
 Audit de configuration : conteneurs Docker, serveur hôte (SSH, mises à jour,
 pare-feu, démon Docker) et certificats TLS.

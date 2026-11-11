@@ -191,3 +191,13 @@ pip install -r requirements.txt pytest && python -m pytest tests
 - Surveillance de disponibilité (ping HTTP de vos URLs)
 - Multi-serveurs (agents légers + instance centrale)
 - Cartographie MITRE ATT&CK des attaques détectées
+
+## Auteur et licence
+
+LogSonar est conçu et développé par **Naby Sidime** (https://github.com/NabySidime).
+
+Distribué sous [licence MIT](LICENSE) : vous pouvez l'utiliser, le modifier et le redistribuer,
+à condition de conserver la mention de copyright et la licence (voir aussi [NOTICE](NOTICE)).
+Les commits de ce dépôt sont signés : un commit « Verified » sur GitHub provient bien de l'auteur.
+
+Contributions bienvenues par pull request : voir [CONTRIBUTING.md](CONTRIBUTING.md).

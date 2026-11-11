@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Naby Sidime. LogSonar : https://github.com/NabySidime/LogSonar
 """
 Authentification en deux étapes : mot de passe, puis code TOTP (application
 d'authentification). La première connexion enrôle l'application via un QR code.
