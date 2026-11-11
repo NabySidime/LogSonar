@@ -18,12 +18,14 @@ from .detection.engine import analyze, analyze_request, is_success, neutral_reas
 from .detection.parsers import is_private_ip
 from .hub import hub
 from .security import account_limiter, ip_limiter
-from .traffic import traffic
+from .traffic import errors_without_suspects, spike_sources, traffic
 from .vuln import audit, scanner
 
 # Attente (s) avant d'alerter sur une attaque vue avec une IP interne. Doit rester
 # inférieure à la fenêtre de 5 s de _is_duplicate.
 PROXY_WAIT = 3.0
+# Un pic causé par un scan ne part par email que s'il dure au moins ce nombre de minutes
+SCAN_NOTIFY_MINUTES = 3
 
 
 def _fmt_bytes(n: float) -> str:
@@ -60,6 +62,7 @@ class Monitor:
         self.started = time.time()
         self._sync_now = asyncio.Event()
         self._bg: set[asyncio.Task] = set()
+        self._scan_minutes = 0                       # minutes consécutives de pic causé par un scan
 
     def _spawn(self, coro) -> None:
         task = asyncio.create_task(coro)
@@ -454,12 +457,22 @@ class Monitor:
                 keep.add(fp)  # hystérésis : évite l'alternance ouverte/résolue
         await alerts.resolve_prefix("host:disk:", keep)
 
-        # Trafic
+        await self._evaluate_traffic(t)
+
+    async def _evaluate_traffic(self, t: dict) -> None:
+        """Pics de trafic et taux d'erreurs 5xx, une fois par minute.
+
+        Un scanner seul (ou deux) ne fait pas une panne : un pic qu'il explique
+        à lui seul, ou des 5xx renvoyées à des IP qui attaquent ou sont bloquées
+        (le proxy qui les freine), restent dans le dashboard sans email."""
         rpm = t["requests"]
+        src = traffic.last_minute_sources()
+
         fixed = S.get("traffic_rpm_threshold")
         baseline = traffic.baseline_rpm()
         limit = fixed if fixed > 0 else (max(baseline * S.get("traffic_spike_factor"), S.get("traffic_min_rpm")) if baseline else 0)
-        if limit and rpm > limit:
+        scanners = spike_sources(src["ips"], rpm, limit) if limit and rpm > limit else []
+        if limit and rpm > limit and not scanners:
             sev = "high" if rpm > limit * 2 else "warning"
             top = traffic.summary(5)
             tops = ", ".join(f"{x['ip']} ({x['count']})" for x in top["top_ips"][:5])
@@ -468,18 +481,56 @@ class Monitor:
                 f"Seuil : {limit:.0f} req/min" + (f" (normale : {baseline:.0f})" if not fixed else "") +
                 f"\nIP les plus actives : {tops or '—'}", "Trafic",
             )
-        elif alerts.is_open("traffic:spike") and (not limit or rpm < limit * 0.8):
+        elif alerts.is_open("traffic:spike") and (not limit or rpm < limit * 0.8 or scanners):
             await alerts.resolve("traffic:spike")
 
-        if rpm >= 30 and t["errors"] / rpm * 100 >= S.get("error_rate_threshold"):
-            pct = t["errors"] / rpm * 100
+        if scanners:
+            self._scan_minutes += 1
+            # Email seulement si le scan dure : « high » fait monter la gravité, donc notifie
+            sev = "high" if self._scan_minutes >= SCAN_NOTIFY_MINUTES else "warning"
+            share = sum(src["ips"][ip] for ip in scanners) / rpm * 100
+            await alerts.raise_alert(
+                "traffic:scan", "traffic", sev,
+                f"Scan depuis {', '.join(scanners)} : {rpm} requêtes/min",
+                f"{share:.0f} % des requêtes de la dernière minute viennent de {', '.join(scanners)}. "
+                f"Sans elles, le trafic resterait sous le seuil ({limit:.0f} req/min) : ce n'est pas un afflux de visiteurs.\n"
+                f"Durée : {self._scan_minutes} min. Email seulement au-delà de {SCAN_NOTIFY_MINUTES - 1} min.",
+                "Trafic", notify=sev == "high",
+            )
+        else:
+            self._scan_minutes = 0
+            if alerts.is_open("traffic:scan"):
+                await alerts.resolve("traffic:scan")
+
+        threshold = S.get("error_rate_threshold")
+        raw_alarm = rpm >= 30 and t["errors"] / rpm * 100 >= threshold
+        clean_req, clean_err, blamed = errors_without_suspects(src, rpm, t["errors"])
+        if clean_req >= 30 and clean_err / clean_req * 100 >= threshold:
+            pct = clean_err / clean_req * 100
+            note = (f"\n(Erreurs de {', '.join(blamed[:5])} non comptées : ces IP attaquent ou sont bloquées.)"
+                    if blamed else "")
             await alerts.raise_alert(
                 "traffic:errors", "traffic", "high", f"{pct:.0f} % de réponses en erreur serveur (5xx)",
-                f"{t['errors']} erreurs 5xx sur {rpm} requêtes la dernière minute. L'application ou sa base de données a probablement un problème.",
+                f"{clean_err} erreurs 5xx sur {clean_req} requêtes la dernière minute. "
+                f"L'application ou sa base de données a probablement un problème.{note}",
                 "Trafic",
             )
-        elif alerts.is_open("traffic:errors") and (rpm == 0 or t["errors"] / max(rpm, 1) * 100 < S.get("error_rate_threshold") / 2):
+        elif alerts.is_open("traffic:errors") and (clean_req == 0 or clean_err / max(clean_req, 1) * 100 < threshold / 2):
             await alerts.resolve("traffic:errors")
+
+        if raw_alarm and blamed and not alerts.is_open("traffic:errors"):
+            pct = t["errors"] / rpm * 100
+            await alerts.raise_alert(
+                "traffic:errors:scan", "traffic", "warning",
+                f"{pct:.0f} % d'erreurs 5xx, causées par un scan ({', '.join(blamed[:3])})",
+                f"{t['errors'] - clean_err} des {t['errors']} erreurs 5xx de la dernière minute ont été renvoyées "
+                f"à {', '.join(blamed[:5])}, qui attaque(nt) ou sont bloquée(s) par le proxy. "
+                "Sans elles, le taux d'erreurs reste sous le seuil : ce n'est pas une panne.\n"
+                "Si ce sont des 503 de nginx, c'est sa limite de débit : « limit_req_status 429; » les classe en 4xx.",
+                "Trafic", notify=False,
+            )
+        elif alerts.is_open("traffic:errors:scan") and not (raw_alarm and blamed):
+            await alerts.resolve("traffic:errors:scan")
 
     def _host_context(self, sample: dict) -> str:
         lines = [
