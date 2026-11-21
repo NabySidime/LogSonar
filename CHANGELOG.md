@@ -2,7 +2,12 @@
 
 ## Prochaine version
 
+### Nouveautés
+- **Alarme de nuit** : sonnerie en boucle dans le navigateur (réveil, carillon, sonar ou sirène) quand une attaque est acceptée par le serveur, qu'une attaque ciblée ou un afflux d'attaques arrive, ou que la connexion avec LogSonar est perdue depuis 2 min. Elle ne sonne que si personne n'a touché l'ordinateur depuis le délai choisi, et jusqu'à ce qu'on l'arrête.
+- **Alertes « Attaque ciblée » et « Afflux d'attaques »** : une même IP qui essaie plusieurs techniques, ou de nombreuses IP en même temps. Un scanner qui envoie des centaines de requêtes d'un seul type ne les déclenche pas. Seuils réglables dans Paramètres.
+
 ### Améliorations
+- **Téléphone** : toucher un champ ne zoome plus la page (champs en 16 px) ; le zoom à deux doigts reste possible. Le menu se ferme en touchant à côté, en touchant un lien (même celui de la page affichée) ou avec Échap.
 - **Attaques « acceptées » sans fausses alertes** : un code 2xx ne suffit plus. Une charge seulement dans l'en-tête Referer ou User-Agent (sauf Log4Shell), ou une réponse de la taille de la page normale (paramètres ignorés), reste visible dans le tableau de bord avec l'explication, mais ne part plus par email et sort des « réponses positives » du rapport.
 - **Score : ce que vous pouvez corriger, et ce qui attend l'éditeur** : chaque image est comparée à la dernière version publiée sur son registre (lecture seule). Les failles d'une image d'éditeur déjà à jour (mailcow, par exemple) sont « en attente d'une nouvelle image de l'éditeur » et pèsent aussi peu que les failles sans correctif. Une image plus récente disponible est signalée dans « Cibles analysées ». L'alerte « vulnérabilités critiques » ne compte plus que les failles à corriger.
 

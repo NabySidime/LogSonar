@@ -338,11 +338,13 @@ function connectWS() {
   const live = $("#live");
   ws.onopen = () => {
     App.wsRetry = 1;
+    if (typeof Alarm !== "undefined") Alarm.onConnection(true);
     live.className = "live on"; $(".txt", live).textContent = "En direct";
     ws.send(JSON.stringify({ type: "logs", enabled: App.page === "logs" }));
   };
   ws.onclose = (e) => {
     live.className = "live off"; $(".txt", live).textContent = "Hors ligne";
+    if (typeof Alarm !== "undefined") Alarm.onConnection(false);
     if (e.code === 4401) { window.location.replace("/login"); return; }
     setTimeout(connectWS, Math.min(App.wsRetry *= 2, 30) * 1000);
   };
@@ -366,6 +368,7 @@ function onAlertMessage(a) {
     seenAlerts.add(a.id);
     toast(`${(SEV[a.severity] || {}).label} : ${a.title}`, a.severity === "critical" ? "error" : "");
   }
+  if (typeof Alarm !== "undefined") Alarm.onAlert(a);
   refreshAlertCount();
 }
 let alertCountTimer = null;
@@ -422,7 +425,7 @@ async function route() {
   App.page = page;
   wsLogs(page === "logs");
   $$("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.page === page));
-  $("#sidebar").classList.remove("open");
+  closeMenu();
   const view = $("#view");
   setHTML(view, html`<div class="grid g-4">${[1, 2, 3, 4].map(() => html`<div class="card kpi"><div class="skeleton" style="width:50%"></div><div class="skeleton" style="height:28px;width:70%"></div></div>`)}</div>`);
   window.scrollTo(0, 0);
@@ -434,8 +437,14 @@ async function route() {
   }
 }
 
+// Menu (téléphone) : fermé par un lien du menu, même celui de la page affichée, par un toucher
+// à côté (fond sombre) ou par Échap
+function closeMenu() { $("#sidebar").classList.remove("open"); document.body.classList.remove("menu-open"); }
+function toggleMenu() { const open = $("#sidebar").classList.toggle("open"); document.body.classList.toggle("menu-open", open); }
+
 // Délégation des clics : aucun gestionnaire inline (CSP stricte)
 document.addEventListener("click", (e) => {
+  if (e.target.closest("#nav a")) closeMenu();
   const el = e.target.closest("[data-action]");
   if (el) {
     const fn = App.actions[el.dataset.action];
@@ -444,7 +453,7 @@ document.addEventListener("click", (e) => {
   }
   if (e.target.matches("[data-overlay]")) closeOverlay();
 });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeOverlay(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeOverlay(); closeMenu(); } });
 
 Object.assign(App.actions, {
   close: closeOverlay,
@@ -468,7 +477,8 @@ Object.assign(App.actions, {
       setHashParams({ [el.dataset.param]: "", from: Math.floor(from), to: to ? Math.floor(to) : "" });
     });
   },
-  menu: () => $("#sidebar").classList.toggle("open"),
+  menu: toggleMenu,
+  "menu-close": closeMenu,
   theme: () => {
     const cur = document.documentElement.getAttribute("data-theme") ||
       (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
@@ -493,6 +503,7 @@ async function boot() {
   $("#me-avatar").textContent = App.me.username.charAt(0).toUpperCase();
   if (!App.isAdmin()) $$(".admin-only").forEach((el) => el.classList.add("hidden"));
   icons();
+  if (typeof Alarm !== "undefined") Alarm.init();
   connectWS();
   refreshAlertCount();
   window.addEventListener("hashchange", route);

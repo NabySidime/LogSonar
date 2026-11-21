@@ -33,6 +33,7 @@ _INT_RANGES = {
     "disk_warn": (10, 100), "disk_crit": (10, 100), "metric_duration_min": (1, 60),
     "traffic_rpm_threshold": (0, 10_000_000), "traffic_spike_factor": (2, 100), "traffic_min_rpm": (1, 1_000_000),
     "error_rate_threshold": (1, 100), "attack_campaign_threshold": (5, 10000), "tls_warn_days": (1, 90),
+    "attack_targeted_types": (0, 20), "attack_surge_threshold": (0, 100000), "attack_surge_min_ips": (1, 10000),
 }
 
 
