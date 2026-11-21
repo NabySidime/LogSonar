@@ -43,6 +43,9 @@ DEFAULTS: dict[str, tuple[Any, type]] = {
     "error_rate_threshold": (10, int),            # % de réponses 5xx
     # Détection
     "attack_campaign_threshold": (30, int),       # attaques d'une même IP en 10 min
+    "attack_targeted_types": (3, int),            # techniques différentes d'une même IP en 10 min (0 = désactivé)
+    "attack_surge_threshold": (100, int),         # attaques toutes IP confondues en 10 min (0 = désactivé)
+    "attack_surge_min_ips": (10, int),            # ... venant d'au moins N IP différentes
     # TLS
     "tls_domains": ("", str),                     # "exemple.com, api.exemple.com:8443"
     "tls_warn_days": (14, int),

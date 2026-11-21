@@ -370,4 +370,33 @@ pre.msg { margin: 0; white-space: pre-wrap; word-break: break-word; font: inheri
 @media (max-width: 560px) {
   .g-4 { grid-template-columns: minmax(0, 1fr); }
   .live .txt { display: none; }
+  .alarm-btn .txt { display: none; }
 }
+/* Menu ouvert sur téléphone : fond sombre, un toucher à côté le ferme */
+.sidebar-backdrop { display: none; }
+@media (max-width: 900px) {
+  body.menu-open .sidebar-backdrop { display: block; position: fixed; inset: 0; z-index: 35; background: rgba(0, 0, 0, .45); animation: fade .15s ease; }
+}
+/* Téléphones et tablettes : un champ en moins de 16 px fait zoomer Safari et Chrome
+   dès qu'on le touche. En 16 px, plus de zoom automatique ; le zoom à deux doigts reste possible. */
+@media (max-width: 900px), (pointer: coarse) {
+  .input, select.input, textarea.input, .auth .input { font-size: 16px; }
+}
+
+/* ---------- Alarme de nuit ---------- */
+.alarm-btn.on { color: var(--good); border-color: color-mix(in srgb, var(--good) 45%, var(--border)); }
+.alarm-btn.locked { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 55%, var(--border)); animation: alarm-pulse 1.6s ease-in-out infinite; }
+.alarm-screen { position: fixed; inset: 0; z-index: 200; display: flex; align-items: center; justify-content: center; padding: 16px;
+  background: color-mix(in srgb, var(--critical) 82%, #000); animation: alarm-flash 1s steps(2, jump-none) infinite; }
+.alarm-box { width: min(640px, 100%); max-height: calc(100vh - 32px); overflow: auto; background: var(--surface); color: var(--text);
+  border-radius: var(--radius); box-shadow: var(--shadow-lg); padding: 24px; display: flex; flex-direction: column; gap: 12px; text-align: center; }
+.alarm-icon svg { width: 48px; height: 48px; color: var(--critical); margin: 0 auto; }
+.alarm-kicker { font-size: 12.5px; font-weight: 600; color: var(--critical); text-transform: uppercase; letter-spacing: .05em; }
+.alarm-box h2 { font-size: 20px; margin: 0; }
+.alarm-detail { text-align: left; white-space: pre-wrap; word-break: break-word; font-family: var(--mono); font-size: 12.5px; background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px; margin: 0; max-height: 240px; overflow: auto; }
+.alarm-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.btn.alarm-stop { height: 48px; padding: 0 22px; font-size: 16px; background: var(--critical); border-color: var(--critical); }
+@keyframes alarm-flash { 50% { background: color-mix(in srgb, var(--critical) 55%, #000); } }
+@keyframes alarm-pulse { 50% { opacity: .55; } }
+@media (prefers-reduced-motion: reduce) { .alarm-screen, .alarm-btn.locked { animation: none; } }

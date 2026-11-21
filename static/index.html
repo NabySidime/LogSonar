@@ -55,17 +55,21 @@
       </div>
       <div class="topbar-actions">
         <div id="page-actions" class="row"></div>
+        <button class="btn sm alarm-btn off" id="alarm-btn" data-action="alarm-settings" title="Alarme de nuit"></button>
         <span class="live" id="live" title="Connexion temps réel"><span class="dot"></span><span class="txt">Connexion…</span></span>
       </div>
     </header>
     <main class="content" id="view"></main>
   </div>
 </div>
+<div class="sidebar-backdrop" data-action="menu-close" aria-hidden="true"></div>
 <div class="toasts" id="toasts" aria-live="polite"></div>
 <div id="overlay-root"></div>
+<div id="alarm-root"></div>
 <script src="/static/vendor/lucide.min.js"></script>
 <script src="/static/vendor/chart.umd.min.js"></script>
 <script src="/static/js/core.js"></script>
+<script src="/static/js/alarm.js"></script>
 <script src="/static/js/pages-monitoring.js"></script>
 <script src="/static/js/pages-security.js"></script>
 <script src="/static/js/pages-admin.js"></script>

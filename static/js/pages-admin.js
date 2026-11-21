@@ -64,6 +64,9 @@ App.pages.settings = async (view) => {
       ${numField("traffic_min_rpm", "Trafic minimum pour alerter", s, "Ignore les pics sur un site peu visité.", "req/min")}
       ${numField("error_rate_threshold", "Taux d'erreurs 5xx", s, "", "%")}
       ${numField("attack_campaign_threshold", "Campagne d'attaque", s, "Tentatives d'une même IP en 10 min.", "tentatives")}
+      ${numField("attack_targeted_types", "Attaque ciblée", s, "Techniques différentes essayées par une même IP en 10 min (robots et mots de passe exclus). Fait sonner l'alarme de nuit. 0 = désactivé.", "techniques")}
+      ${numField("attack_surge_threshold", "Afflux d'attaques", s, "Attaques toutes IP confondues en 10 min. Fait sonner l'alarme de nuit. 0 = désactivé.", "attaques")}
+      ${numField("attack_surge_min_ips", "Afflux : nombre d'IP minimum", s, "Un seul scanner qui envoie des centaines de requêtes ne compte pas comme un afflux.", "IP")}
     </div></div></div>
 
     <div class="card"><div class="card-head"><h3>Certificats TLS</h3></div><div class="card-body"><div class="form-grid">

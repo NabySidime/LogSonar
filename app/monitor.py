@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -26,6 +26,8 @@ from .vuln import audit, scanner
 # Attente (s) avant d'alerter sur une attaque vue avec une IP interne. Doit rester
 # inférieure à la fenêtre de 5 s de _is_duplicate.
 PROXY_WAIT = 3.0
+# Ne comptent pas pour « attaque ciblée » et « afflux » : bruit de fond de tout serveur public
+TARGETED_IGNORED = {"Scan de vulnérabilités (Bot)", "Échec d'authentification", "Alerte interne de l'application", "Flood"}
 # Un pic causé par un scan ne part par email que s'il dure au moins ce nombre de minutes
 SCAN_NOTIFY_MINUTES = 3
 
@@ -57,6 +59,8 @@ class Monitor:
         self._pending_events: list[dict] = []
         self._recent_keys: dict[tuple, tuple[float, dict]] = {}
         self._ip_attacks: dict[str, deque] = defaultdict(deque)
+        self._ip_types: dict[str, deque] = defaultdict(deque)   # (ts, technique) par IP, 10 min
+        self._surge: deque = deque()                              # (ts, ip) toutes IP, 10 min
         self._kills: dict[str, float] = {}
         self._starts: dict[str, deque] = defaultdict(lambda: deque(maxlen=20))
         self.lines_total = 0
@@ -230,6 +234,52 @@ class Monitor:
             if len(self._ip_attacks) > 20000:
                 for k in [k for k, v in self._ip_attacks.items() if not v or now - v[-1] > 600]:
                     del self._ip_attacks[k]
+            await self._targeted_alerts(ev, ip, typ, where, target)
+
+    async def _targeted_alerts(self, ev: dict, ip: str, typ: str, where: str, target: str) -> None:
+        """
+        Attaque ciblée (une IP essaie plusieurs techniques) et afflux (beaucoup d'attaques venant
+        de nombreuses IP). Un scanner automatique envoie des centaines de requêtes d'un seul type
+        depuis une ou deux IP : il ne déclenche ni l'une ni l'autre. Ces alertes font sonner
+        l'alarme de nuit du navigateur.
+        """
+        if typ in TARGETED_IGNORED:
+            return
+        now = time.time()
+        tq = self._ip_types[ev["ip"]]
+        tq.append((now, typ))
+        while tq and now - tq[0][0] > 600:
+            tq.popleft()
+        need = S.get("attack_targeted_types")
+        techniques = sorted({t for _, t in tq})
+        if need and len(techniques) >= need:
+            await alerts.raise_alert(
+                f"targeted:{ev['ip']}", "security", "high",
+                f"Attaque ciblée depuis {ip} ({len(techniques)} techniques en 10 min)",
+                "Techniques essayées : " + ", ".join(techniques) + f"\n\nDernière requête : {target}\nConteneur : {where}"
+                "\n\nUne même source essaie plusieurs méthodes : c'est une personne ou un outil qui vise ce serveur. "
+                "Vérifiez les réponses 2xx de cette IP et bannissez-la.",
+                where,
+            )
+        if len(self._ip_types) > 20000:
+            for k in [k for k, v in self._ip_types.items() if not v or now - v[-1][0] > 600]:
+                del self._ip_types[k]
+
+        sq = self._surge
+        sq.append((now, ev["ip"]))
+        while sq and now - sq[0][0] > 600:
+            sq.popleft()
+        threshold = S.get("attack_surge_threshold")
+        if threshold and len(sq) >= threshold:
+            ips = Counter(i for _, i in sq)
+            if len(ips) >= S.get("attack_surge_min_ips"):
+                top = ", ".join(f"{i} ({n})" for i, n in ips.most_common(5))
+                await alerts.raise_alert(
+                    "surge", "security", "high",
+                    f"Afflux d'attaques : {len(sq)} tentatives depuis {len(ips)} IP en 10 min",
+                    f"Sources principales : {top}\nDernière tentative : {typ} sur {where}\n{target}",
+                    "Toutes sources",
+                )
 
     async def _flush(self) -> None:
         if not self._pending_events:
