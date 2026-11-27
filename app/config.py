@@ -58,7 +58,7 @@ DOCKER_URL = os.environ.get("LOGSONAR_DOCKER_URL", os.environ.get("DOCKER_HOST",
 
 # --- Sécurité -----------------------------------------------------------------
 JWT_SECRET_ENV = os.environ.get("LOGSONAR_JWT_SECRET", "")
-SESSION_HOURS = _int("LOGSONAR_SESSION_HOURS", 12)
+SESSION_HOURS = _int("LOGSONAR_SESSION_HOURS", 24)
 # Nombre maximum de comptes : un outil d'administration doit rester à quelques personnes de confiance.
 MAX_USERS = 3
 # "auto" : cookie Secure si la requête arrive en HTTPS (directement ou via un proxy de confiance)

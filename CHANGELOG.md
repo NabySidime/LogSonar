@@ -7,11 +7,13 @@
 - **Alertes « Attaque ciblée » et « Afflux d'attaques »** : une même IP qui essaie plusieurs techniques, ou de nombreuses IP en même temps. Un scanner qui envoie des centaines de requêtes d'un seul type ne les déclenche pas. Seuils réglables dans Paramètres.
 
 ### Améliorations
+- **Session de 24 h** au lieu de 12 h (`LOGSONAR_SESSION_HOURS`) : on peut se connecter le soir et laisser l'alarme de nuit armée jusqu'au lendemain.
 - **Téléphone** : toucher un champ ne zoome plus la page (champs en 16 px) ; le zoom à deux doigts reste possible. Le menu se ferme en touchant à côté, en touchant un lien (même celui de la page affichée) ou avec Échap.
 - **Attaques « acceptées » sans fausses alertes** : un code 2xx ne suffit plus. Une charge seulement dans l'en-tête Referer ou User-Agent (sauf Log4Shell), ou une réponse de la taille de la page normale (paramètres ignorés), reste visible dans le tableau de bord avec l'explication, mais ne part plus par email et sort des « réponses positives » du rapport.
 - **Score : ce que vous pouvez corriger, et ce qui attend l'éditeur** : chaque image est comparée à la dernière version publiée sur son registre (lecture seule). Les failles d'une image d'éditeur déjà à jour (mailcow, par exemple) sont « en attente d'une nouvelle image de l'éditeur » et pèsent aussi peu que les failles sans correctif. Une image plus récente disponible est signalée dans « Cibles analysées ». L'alerte « vulnérabilités critiques » ne compte plus que les failles à corriger.
 
 ### Corrections
+- **Connexion sur téléphone** : la carte de connexion (code de vérification, activation de la 2FA) dépassait de l'écran sur un petit téléphone ; elle tient maintenant dans 320 px.
 - **Paramètres** : la clé API Brevo n'est plus écrasée par le remplissage automatique du navigateur ou d'un gestionnaire de mots de passe lors d'un enregistrement.
 - **Paramètres** : une valeur qui n'est pas une clé Brevo (`xkeysib-…`) ou un token Telegram est refusée avec un message, au lieu de remplacer le secret enregistré ; le champ affiche les 4 derniers caractères du secret conservé.
 - **Mises à jour** : les fichiers JavaScript et CSS sont revalidés à chaque chargement ; le navigateur pouvait garder l'ancienne version plusieurs heures après une mise à jour.
